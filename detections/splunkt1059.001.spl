@@ -1,3 +1,0 @@
-index=sysmon EventCode=1 Image="*powershell.exe" AND ParentImage!="*splunkd.exe"
-| table _time host User ParentImage Image CommandLine
-| sort - _time
