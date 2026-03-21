@@ -33,9 +33,20 @@ def main():
         if not scenario_file.exists():
             fail(f"Missing validation scenario for {spl_file.name}")
 
-        content = spl_file.read_text(encoding="utf-8", errors="ignore")
-        if "t" not in spl_file.stem.lower():
-            print(f"[WARN] {spl_file.name} may not include MITRE ATT&CK reference")
+        content = spl_file.read_text(encoding="utf-8", errors="ignore").lower()
+        for key in [
+            "# name:",
+            "# mitre:",
+            "# description:",
+            "# app:",
+            "# cron_schedule:",
+            "# alert_type:",
+            "# alert_comparator:",
+            "# alert_threshold:",
+            "# disabled:",
+        ]:
+            if key not in content:
+                fail(f"{spl_file.name} missing metadata line: {key}")
 
     print("[PASS] Repository validation successful")
 

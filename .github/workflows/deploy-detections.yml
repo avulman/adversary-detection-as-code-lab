@@ -1,0 +1,31 @@
+name: Validate and Deploy Splunk Detections
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  validate-and-deploy:
+    runs-on: [self-hosted, windows, x64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requests
+        run: py -m pip install requests
+
+      - name: Validate repository
+        run: py scripts\validate_repo.py
+
+      - name: Deploy detections to Splunk
+        env:
+          SPLUNK_BASE_URL: ${{ secrets.SPLUNK_BASE_URL }}
+          SPLUNK_USERNAME: ${{ secrets.SPLUNK_USERNAME }}
+          SPLUNK_PASSWORD: ${{ secrets.SPLUNK_PASSWORD }}
+        run: py scripts\deploy_to_splunk.py
