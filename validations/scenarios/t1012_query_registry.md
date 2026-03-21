@@ -1,10 +1,31 @@
-This detects Windows Registry queries.
+# T1012 - Query Registry
 
+## Objective
+Detect registry enumeration using reg.exe or PowerShell.
+
+## Telemetry
+- Sysmon Event ID 1
+- Host: WIN-ENDPOINT-01
+- Index: sysmon
+
+## Detection Logic
+See `t1012_registry_query.spl`
+
+## Why It Matters
 Adversaries may interact with the Windows Registry to gather information about the system, configuration, and installed software.
 
-Testing:
-```powershell
-'Invoke-AtomicTest T1012'
-```
-Detection Results:
-<img width="1903" height="641" alt="image" src="https://github.com/user-attachments/assets/cbe98d9c-6cb8-4f80-891a-ceb0243223be" />
+## Expected Artifacts
+- Image = reg.exe or powershell.exe
+- CommandLine contains query, HKLM, HKCU
+
+## Validation
+1. Run `reg query HKLM\Software\Microsoft\Windows\CurrentVersion`
+2. Run `powershell -Command "Get-ItemProperty HKLM:\Software"`
+3. Run `Invoke-AtomicTest T1012`
+4. Search Splunk with the detection query
+
+## Result
+Pass
+
+## Tuning Notes
+Excluded splunkd.exe as it is the core executable process for Splunk software.

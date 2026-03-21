@@ -1,3 +1,3 @@
-Technique | Detection | Status
-| :--- | :---: | ---: |
-T1059 | PowerShell execution |✅
+Technique | Detection | Data Source | Test Method | Status | Score | Notes
+| :--- | :---: | | :---: || :---: | ---: |
+T1059 | PowerShell Execution | Splunk |  
