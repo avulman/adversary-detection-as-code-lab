@@ -3,6 +3,7 @@ name: Validate and Deploy Splunk Detections
 on:
   push:
     branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   validate-and-deploy:

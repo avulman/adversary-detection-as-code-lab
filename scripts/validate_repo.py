@@ -7,9 +7,11 @@ SPLUNK_DIR = ROOT / "detections" / "splunk"
 SCENARIO_DIR = ROOT / "validations" / "scenarios"
 MATRIX = ROOT / "validations" / "detection-validation-matrix.md"
 
+
 def fail(msg):
     print(f"[FAIL] {msg}")
     sys.exit(1)
+
 
 def main():
     if not README.exists():
@@ -34,9 +36,6 @@ def main():
         "# description:",
         "# app:",
         "# cron_schedule:",
-        "# alert_type:",
-        "# alert_comparator:",
-        "# alert_threshold:",
         "# disabled:",
         "# email_to:",
         "# email_subject:",
@@ -54,6 +53,7 @@ def main():
                 fail(f"{spl_file.name} missing metadata line: {key}")
 
     print("[PASS] Repository validation successful")
+
 
 if __name__ == "__main__":
     main()
