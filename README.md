@@ -1,8 +1,6 @@
 # Adversary Detection as Code Lab
 
-# AEDL Detection Lab
-
-AEDL is an **Adversary Emulation Detection Lab** built to develop, validate, and document host-based and network-based detections against realistic attacker behavior.
+Built to develop, validate, and document host-based and network-based detections against realistic attacker behavior.
 
 The lab combines:
 
