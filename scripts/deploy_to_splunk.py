@@ -12,9 +12,11 @@ SPLUNK_PASSWORD = os.getenv("SPLUNK_PASSWORD", "")
 
 requests.packages.urllib3.disable_warnings()
 
+
 def fail(msg: str):
     print(f"[FAIL] {msg}")
     sys.exit(1)
+
 
 def parse_detection_file(path: Path):
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -36,9 +38,6 @@ def parse_detection_file(path: Path):
         "description",
         "app",
         "cron_schedule",
-        "alert_type",
-        "alert_comparator",
-        "alert_threshold",
         "disabled",
         "email_to",
         "email_subject",
@@ -49,7 +48,11 @@ def parse_detection_file(path: Path):
     if missing:
         fail(f"{path.name} missing metadata keys: {', '.join(missing)}")
 
+    if not query:
+        fail(f"{path.name} has an empty search query")
+
     return metadata, query
+
 
 def splunk_session():
     if not SPLUNK_BASE_URL or not SPLUNK_USERNAME or not SPLUNK_PASSWORD:
@@ -60,21 +63,33 @@ def splunk_session():
     s.verify = False
     return s
 
+
 def get_saved_search(session, owner: str, app: str, name: str):
     url = f"{SPLUNK_BASE_URL}/servicesNS/{owner}/{app}/saved/searches/{requests.utils.quote(name, safe='')}"
     return session.get(url, params={"output_mode": "json"})
+
 
 def build_payload(metadata: dict, query: str):
     return {
         "name": metadata["name"],
         "search": query,
         "description": f'{metadata["description"]} | MITRE {metadata["mitre"]}',
+
+        # Make it a real scheduled alert
         "is_scheduled": "1",
         "cron_schedule": metadata["cron_schedule"],
         "disabled": metadata["disabled"],
-        "alert_type": metadata["alert_type"],
-        "alert_comparator": metadata["alert_comparator"],
-        "alert_threshold": metadata["alert_threshold"],
+
+        # Trigger whenever there is at least 1 result
+        "alert_type": "always",
+        "alert.track": "1",
+
+        # Search the recent window each run
+        "dispatch.earliest_time": "-5m",
+        "dispatch.latest_time": "now",
+        "dispatch.ttl": "2p",
+
+        # Email action
         "actions": "email",
         "action.email": "1",
         "action.email.to": metadata["email_to"],
@@ -85,18 +100,23 @@ def build_payload(metadata: dict, query: str):
         "action.email.include.trigger": "1",
         "action.email.format": "table",
         "action.email.sendresults": "1",
+        "action.email.inline": "1",
+        "action.email.maxresults": "10",
     }
+
 
 def create_saved_search(session, owner: str, app: str, metadata: dict, query: str):
     url = f"{SPLUNK_BASE_URL}/servicesNS/{owner}/{app}/saved/searches"
     data = build_payload(metadata, query)
     return session.post(url, data=data)
 
+
 def update_saved_search(session, owner: str, app: str, metadata: dict, query: str):
     url = f"{SPLUNK_BASE_URL}/servicesNS/{owner}/{app}/saved/searches/{requests.utils.quote(metadata['name'], safe='')}"
     data = build_payload(metadata, query)
     data.pop("name", None)
     return session.post(url, data=data)
+
 
 def main():
     detection_files = sorted(DETECTIONS_DIR.glob("*.spl"))
@@ -112,8 +132,11 @@ def main():
         name = metadata["name"]
 
         print(f"[INFO] Processing {path.name} -> alert '{name}'")
+        print(f"[DEBUG] App={app} Owner={owner}")
+        print(f"[DEBUG] Query={query[:200]}")
 
         existing = get_saved_search(session, owner, app, name)
+        print(f"[DEBUG] Existence check status={existing.status_code}")
 
         if existing.status_code == 200:
             r = update_saved_search(session, owner, app, metadata, query)
@@ -129,6 +152,7 @@ def main():
                 fail(f"Failed to create {name}: {r.status_code} {r.text}")
         else:
             fail(f"Unexpected response checking {name}: {existing.status_code} {existing.text}")
+
 
 if __name__ == "__main__":
     main()
