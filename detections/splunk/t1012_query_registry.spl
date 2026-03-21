@@ -1,3 +1,13 @@
+# name: T1012 Query Registry
+# mitre: T1012
+# description: Detect suspicious registry query activity using reg.exe
+# app: search
+# cron_schedule: */5 * * * *
+# alert_type: always
+# alert_comparator: greater than
+# alert_threshold: 0
+# disabled: 0
+
 index=sysmon EventCode=1 ParentImage!="*splunkd.exe" Image="*\\reg.exe" CommandLine="*query*" OR CommandLine="*HKLM*" OR CommandLine+"*HKCU*"
 | table _time host User ParentImage Image CommandLine
 | sort - _time
