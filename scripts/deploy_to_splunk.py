@@ -75,16 +75,18 @@ def build_payload(metadata: dict, query: str):
         "search": query,
         "description": f'{metadata["description"]} | MITRE {metadata["mitre"]}',
 
-        # Make it a real scheduled alert
+        # Scheduling
         "is_scheduled": "1",
         "cron_schedule": metadata["cron_schedule"],
         "disabled": metadata["disabled"],
 
-        # Trigger whenever there is at least 1 result
-        "alert_type": "always",
+        # Only trigger if results exist
+        "alert_type": "number of events",
+        "alert_comparator": "greater than",
+        "alert_threshold": "0",
         "alert.track": "1",
 
-        # Search the recent window each run
+        # Search window
         "dispatch.earliest_time": "-5m",
         "dispatch.latest_time": "now",
         "dispatch.ttl": "2p",
@@ -134,7 +136,7 @@ def main():
         print(f"[INFO] Processing {path.name} -> alert '{name}'")
         print(f"[DEBUG] App={app} Owner={owner}")
         print(f"[DEBUG] Query={query[:200]}")
-
+        
         existing = get_saved_search(session, owner, app, name)
         print(f"[DEBUG] Existence check status={existing.status_code}")
 
