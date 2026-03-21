@@ -23,7 +23,7 @@ jobs:
       - name: Validate repository
         run: py scripts\validate_repo.py
 
-      - name: Deploy detections to Splunk
+      - name: Deploy detections to Splunk as alerts
         env:
           SPLUNK_BASE_URL: ${{ secrets.SPLUNK_BASE_URL }}
           SPLUNK_USERNAME: ${{ secrets.SPLUNK_USERNAME }}
