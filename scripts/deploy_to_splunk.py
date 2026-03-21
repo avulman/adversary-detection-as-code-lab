@@ -40,6 +40,9 @@ def parse_detection_file(path: Path):
         "alert_comparator",
         "alert_threshold",
         "disabled",
+        "email_to",
+        "email_subject",
+        "email_message",
     ]
 
     missing = [k for k in required if k not in metadata]
@@ -59,12 +62,10 @@ def splunk_session():
 
 def get_saved_search(session, owner: str, app: str, name: str):
     url = f"{SPLUNK_BASE_URL}/servicesNS/{owner}/{app}/saved/searches/{requests.utils.quote(name, safe='')}"
-    r = session.get(url, params={"output_mode": "json"})
-    return r
+    return session.get(url, params={"output_mode": "json"})
 
-def create_saved_search(session, owner: str, app: str, metadata: dict, query: str):
-    url = f"{SPLUNK_BASE_URL}/servicesNS/{owner}/{app}/saved/searches"
-    data = {
+def build_payload(metadata: dict, query: str):
+    return {
         "name": metadata["name"],
         "search": query,
         "description": f'{metadata["description"]} | MITRE {metadata["mitre"]}',
@@ -74,26 +75,28 @@ def create_saved_search(session, owner: str, app: str, metadata: dict, query: st
         "alert_type": metadata["alert_type"],
         "alert_comparator": metadata["alert_comparator"],
         "alert_threshold": metadata["alert_threshold"],
-        "actions": "",
+        "actions": "email",
+        "action.email": "1",
+        "action.email.to": metadata["email_to"],
+        "action.email.subject": metadata["email_subject"],
+        "action.email.message": metadata["email_message"],
+        "action.email.include.results_link": "1",
+        "action.email.include.search": "1",
+        "action.email.include.trigger": "1",
+        "action.email.format": "table",
+        "action.email.sendresults": "1",
     }
-    r = session.post(url, data=data)
-    return r
+
+def create_saved_search(session, owner: str, app: str, metadata: dict, query: str):
+    url = f"{SPLUNK_BASE_URL}/servicesNS/{owner}/{app}/saved/searches"
+    data = build_payload(metadata, query)
+    return session.post(url, data=data)
 
 def update_saved_search(session, owner: str, app: str, metadata: dict, query: str):
     url = f"{SPLUNK_BASE_URL}/servicesNS/{owner}/{app}/saved/searches/{requests.utils.quote(metadata['name'], safe='')}"
-    data = {
-        "search": query,
-        "description": f'{metadata["description"]} | MITRE {metadata["mitre"]}',
-        "is_scheduled": "1",
-        "cron_schedule": metadata["cron_schedule"],
-        "disabled": metadata["disabled"],
-        "alert_type": metadata["alert_type"],
-        "alert_comparator": metadata["alert_comparator"],
-        "alert_threshold": metadata["alert_threshold"],
-        "actions": "",
-    }
-    r = session.post(url, data=data)
-    return r
+    data = build_payload(metadata, query)
+    data.pop("name", None)
+    return session.post(url, data=data)
 
 def main():
     detection_files = sorted(DETECTIONS_DIR.glob("*.spl"))
@@ -108,20 +111,20 @@ def main():
         app = metadata["app"]
         name = metadata["name"]
 
-        print(f"[INFO] Processing {path.name} -> saved search '{name}'")
+        print(f"[INFO] Processing {path.name} -> alert '{name}'")
 
         existing = get_saved_search(session, owner, app, name)
 
         if existing.status_code == 200:
             r = update_saved_search(session, owner, app, metadata, query)
             if r.ok:
-                print(f"[PASS] Updated: {name}")
+                print(f"[PASS] Updated alert: {name}")
             else:
                 fail(f"Failed to update {name}: {r.status_code} {r.text}")
         elif existing.status_code == 404:
             r = create_saved_search(session, owner, app, metadata, query)
             if r.ok:
-                print(f"[PASS] Created: {name}")
+                print(f"[PASS] Created alert: {name}")
             else:
                 fail(f"Failed to create {name}: {r.status_code} {r.text}")
         else:
