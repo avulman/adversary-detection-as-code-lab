@@ -168,43 +168,43 @@ def create_suricata_detection(page, rule: dict):
         print(page.content())
         fail("Could not find/click the create (+) button on the Detections page")
 
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(2500)
 
-    # Language dropdown -> Suricata
-    try:
-        page.get_by_text(re.compile(r"Language", re.I)).click()
-        page.wait_for_timeout(1000)
-        page.get_by_text(re.compile(r"^Suricata$", re.I)).click()
-    except Exception:
-        fail("Could not set Language to Suricata")
+    # Grab comboboxes in the create dialog
+    comboboxes = page.locator('[role="combobox"]')
+    if comboboxes.count() < 2:
+        print(page.content())
+        fail("Could not find the Language/License dropdowns")
 
+    # Language -> Suricata
+    comboboxes.nth(0).click()
+    page.wait_for_timeout(1000)
+    page.get_by_role("option", name=re.compile(r"^suricata$", re.I)).click()
     page.wait_for_timeout(1000)
 
-    # License dropdown -> GPL-2.0
-    try:
-        page.get_by_text(re.compile(r"License", re.I)).click()
-        page.wait_for_timeout(1000)
-        page.get_by_text(re.compile(r"GPL-2.0", re.I)).click()
-    except Exception:
-        fail("Could not set License to GPL-2.0")
-
+    # License -> GPL-2.0
+    comboboxes.nth(1).click()
+    page.wait_for_timeout(1000)
+    page.get_by_role("option", name=re.compile(r"GPL-2.0", re.I)).click()
     page.wait_for_timeout(1000)
 
-    # Signature field
+    # Signature
     try:
         page.get_by_label(re.compile(r"Signature", re.I)).fill(rule["content"])
     except Exception:
         try:
             page.locator("textarea").first.fill(rule["content"])
         except Exception:
+            print(page.content())
             fail("Could not fill Signature field")
 
     page.wait_for_timeout(1000)
 
-    # Create button
+    # Create
     try:
         page.get_by_role("button", name=re.compile(r"Create", re.I)).click()
     except Exception:
+        print(page.content())
         fail("Could not click Create button")
 
     page.wait_for_load_state("networkidle")
