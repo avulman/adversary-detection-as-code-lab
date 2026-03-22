@@ -1,0 +1,27 @@
+name: Validate and Deploy Security Onion Detections
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  validate-and-deploy-so:
+    runs-on: [self-hosted, windows, x64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate repository
+        run: py scripts\validate_repo.py
+
+      - name: Deploy Security Onion Suricata rules
+        env:
+          SO_RULES_DIR: ${{ secrets.SO_RULES_DIR }}
+        run: py scripts\deploy_to_securityonion.py
