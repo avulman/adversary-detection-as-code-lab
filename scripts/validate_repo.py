@@ -17,8 +17,9 @@ def main():
     if not README.exists():
         fail("README.md is missing")
 
-    if not MITRE_ATTACK.exists():
-        fail("detections/splunk directory is missing")
+    if not MITRE_ATTACK_DIR.exists():
+        print(f"MITRE_ATTACK_DIR = {MITRE_ATTACK_DIR}")
+        fail("detections/splunk/mitre-att&ck directory is missing")
 
     if not SCENARIO_DIR.exists():
         fail("validations/scenarios directory is missing")
@@ -26,7 +27,7 @@ def main():
     if not MATRIX.exists():
         fail("validations/detection-validation-matrix.md is missing")
 
-    spl_files = list(MITRE_ATTACK.glob("*.spl"))
+    spl_files = list(MITRE_ATTACK_DIR.glob("*.spl"))
     if not spl_files:
         fail("No .spl files found in detections/splunk/mitre-att&ck")
 

@@ -4,7 +4,7 @@ import sys
 import requests
 
 ROOT = Path(__file__).resolve().parent.parent
-DETECTIONS_DIR = ROOT / "detections" / "splunk"
+MITRE_ATTACK_DIR = ROOT / "detections" / "splunk" / "mitre-att&ck"
 
 SPLUNK_BASE_URL = os.getenv("SPLUNK_BASE_URL", "").rstrip("/")
 SPLUNK_USERNAME = os.getenv("SPLUNK_USERNAME", "")
@@ -121,7 +121,7 @@ def update_saved_search(session, owner: str, app: str, metadata: dict, query: st
 
 
 def main():
-    detection_files = sorted(DETECTIONS_DIR.glob("*.spl"))
+    detection_files = sorted(MITRE_ATTACK_DIR.glob("*.spl"))
     if not detection_files:
         fail("No .spl files found")
 
