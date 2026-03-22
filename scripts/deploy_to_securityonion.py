@@ -177,13 +177,15 @@ def create_suricata_detection(page, rule: dict):
         fail("Could not find the Language/License dropdowns")
 
     # Language -> Suricata
-    comboboxes.nth(0).click()
+    language = page.locator('#detection-language-create')
+    language.click(force=True)
     page.wait_for_timeout(1000)
-    page.get_by_role("option", name=re.compile(r"^suricata$", re.I)).click()
+    page.get_by_role("option", name=re.compile(r"^Suricata$", re.I)).click()
     page.wait_for_timeout(1000)
 
     # License -> GPL-2.0
-    comboboxes.nth(1).click()
+    license_box = page.locator('#detection-license-create')
+    license_box.click(force=True)
     page.wait_for_timeout(1000)
     page.get_by_role("option", name=re.compile(r"GPL-2.0", re.I)).click()
     page.wait_for_timeout(1000)
