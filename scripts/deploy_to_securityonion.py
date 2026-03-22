@@ -118,36 +118,78 @@ def rule_exists_in_all_rulesets(client: paramiko.SSHClient, rule: dict) -> bool:
     return False
 
 
-def ui_login(page):
+ddef ui_login(page):
     page.goto(f"{SO_UI_URL}/login", wait_until="domcontentloaded")
-    page.get_by_label(re.compile("username", re.I)).fill(SO_UI_USERNAME)
-    page.get_by_label(re.compile("password", re.I)).fill(SO_UI_PASSWORD)
-    page.get_by_role("button", name=re.compile("log in|sign in", re.I)).click()
+    print(page.content())
+    page.wait_for_timeout(3000)
+
+    username_selectors = [
+        'input[name="username"]',
+        'input[id="username"]',
+        'input[type="text"]',
+        'input[placeholder*="user" i]',
+        'input[aria-label*="user" i]',
+    ]
+
+    password_selectors = [
+        'input[name="password"]',
+        'input[id="password"]',
+        'input[type="password"]',
+        'input[placeholder*="pass" i]',
+        'input[aria-label*="pass" i]',
+    ]
+
+    username_filled = False
+    for selector in username_selectors:
+        try:
+            page.locator(selector).first.fill(SO_UI_USERNAME, timeout=3000)
+            username_filled = True
+            break
+        except Exception:
+            pass
+
+    if not username_filled:
+        fail("Could not find username field on Security Onion login page")
+
+    password_filled = False
+    for selector in password_selectors:
+        try:
+            page.locator(selector).first.fill(SO_UI_PASSWORD, timeout=3000)
+            password_filled = True
+            break
+        except Exception:
+            pass
+
+    if not password_filled:
+        fail("Could not find password field on Security Onion login page")
+
+    login_button_patterns = [
+        re.compile("log in", re.I),
+        re.compile("sign in", re.I),
+        re.compile("^login$", re.I),
+    ]
+
+    clicked = False
+    for pattern in login_button_patterns:
+        try:
+            page.get_by_role("button", name=pattern).click(timeout=3000)
+            clicked = True
+            break
+        except Exception:
+            pass
+
+    if not clicked:
+        try:
+            page.locator('button[type="submit"]').first.click(timeout=3000)
+            clicked = True
+        except Exception:
+            pass
+
+    if not clicked:
+        fail("Could not find login button on Security Onion login page")
+
     page.wait_for_load_state("networkidle")
-
-
-def create_suricata_detection(page, rule: dict):
-    page.goto(f"{SO_UI_URL}/detections", wait_until="networkidle")
-
-    page.get_by_role("button", name=re.compile(r"^\+$")).click(timeout=10000)
-
-    try:
-        page.get_by_label(re.compile("language", re.I)).click()
-        page.get_by_role("option", name=re.compile("suricata", re.I)).click()
-    except PlaywrightTimeoutError:
-        page.get_by_text(re.compile("language", re.I)).click()
-        page.get_by_text(re.compile("^suricata$", re.I)).click()
-
-    try:
-        page.get_by_label(re.compile("license", re.I)).click()
-        page.get_by_role("option", name=re.compile("GPL-2.0", re.I)).click()
-    except PlaywrightTimeoutError:
-        page.get_by_text(re.compile("license", re.I)).click()
-        page.get_by_text(re.compile("GPL-2.0", re.I)).click()
-
-    page.get_by_label(re.compile("signature", re.I)).fill(rule["content"])
-    page.get_by_role("button", name=re.compile("create", re.I)).click()
-    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(3000)
 
 
 def differential_update_suricata(page):
