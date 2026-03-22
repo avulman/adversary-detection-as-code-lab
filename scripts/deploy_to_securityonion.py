@@ -117,6 +117,7 @@ def ui_login(page):
 
     email = page.locator('[data-aid="login_email_input"] input')
     password = page.locator('[data-aid="login_password_input"] input')
+    button = page.locator('[data-aid="login_password_submit"]')
 
     email.click()
     email.type(SO_UI_USERNAME, delay=100)
@@ -125,17 +126,13 @@ def ui_login(page):
     password.type(SO_UI_PASSWORD, delay=100)
 
     page.wait_for_timeout(2000)
-
-    button = page.locator('[data-aid="login_password_submit"]')
-
-    # wait until enabled
+    button.wait_for(state="visible", timeout=10000)
     page.wait_for_function(
-        "el => !el.disabled",
-        button
+        "(el) => !el.disabled",
+        arg=button.element_handle()
     )
 
     button.click()
-
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(5000)
 
