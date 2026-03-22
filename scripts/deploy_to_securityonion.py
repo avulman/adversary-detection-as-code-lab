@@ -127,35 +127,72 @@ def ui_login(page):
 
 def create_suricata_detection(page, rule: dict):
     page.goto(f"{SO_UI_URL}/detections", wait_until="networkidle")
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(4000)
 
-    # Click the plus button
-    plus_button = page.locator("button").filter(has_text=re.compile(r"^\+$")).first
-    plus_button.click()
+    plus_clicked = False
+    plus_selectors = [
+        '[data-aid*="create"]',
+        '[data-aid*="add"]',
+        'button[aria-label*="add" i]',
+        'button[aria-label*="create" i]',
+        'button:has(.fa-plus)',
+        'button:has(.mdi-plus)',
+        'button:has(svg)',
+    ]
+
+    for selector in plus_selectors:
+        try:
+            locator = page.locator(selector).first
+            if locator.is_visible(timeout=2000):
+                locator.click(timeout=3000)
+                plus_clicked = True
+                break
+        except Exception:
+            pass
+
+    if not plus_clicked:
+        print(page.content())
+        fail("Could not find/click the create (+) button on the Detections page")
+
     page.wait_for_timeout(2000)
 
-    # Select Suricata language
-    page.get_by_text(re.compile(r"Language", re.I)).click()
-    page.wait_for_timeout(1000)
-    page.get_by_text(re.compile(r"^Suricata$", re.I)).click()
+    # Language dropdown -> Suricata
+    try:
+        page.get_by_text(re.compile(r"Language", re.I)).click()
+        page.wait_for_timeout(1000)
+        page.get_by_text(re.compile(r"^Suricata$", re.I)).click()
+    except Exception:
+        fail("Could not set Language to Suricata")
+
     page.wait_for_timeout(1000)
 
-    # Select GPL-2.0 license
-    page.get_by_text(re.compile(r"License", re.I)).click()
-    page.wait_for_timeout(1000)
-    page.get_by_text(re.compile(r"GPL-2.0", re.I)).click()
+    # License dropdown -> GPL-2.0
+    try:
+        page.get_by_text(re.compile(r"License", re.I)).click()
+        page.wait_for_timeout(1000)
+        page.get_by_text(re.compile(r"GPL-2.0", re.I)).click()
+    except Exception:
+        fail("Could not set License to GPL-2.0")
+
     page.wait_for_timeout(1000)
 
-    # Fill signature
+    # Signature field
     try:
         page.get_by_label(re.compile(r"Signature", re.I)).fill(rule["content"])
     except Exception:
-        page.locator("textarea").first.fill(rule["content"])
+        try:
+            page.locator("textarea").first.fill(rule["content"])
+        except Exception:
+            fail("Could not fill Signature field")
 
     page.wait_for_timeout(1000)
 
-    # Click Create
-    page.get_by_role("button", name=re.compile(r"Create", re.I)).click()
+    # Create button
+    try:
+        page.get_by_role("button", name=re.compile(r"Create", re.I)).click()
+    except Exception:
+        fail("Could not click Create button")
+
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(4000)
 
