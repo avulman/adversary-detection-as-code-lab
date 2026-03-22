@@ -19,16 +19,21 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python dependencies
-        run: py -m pip install paramiko
+        run: py -m pip install paramiko playwright
+
+      - name: Install Playwright browser
+        run: py -m playwright install chromium
 
       - name: Validate repository
         run: py scripts\validate_repo.py
 
-      - name: Deploy Security Onion Suricata rules
+      - name: Deploy Security Onion detections via UI automation
         env:
           SO_MANAGER_HOST: ${{ secrets.SO_MANAGER_HOST }}
           SO_MANAGER_PORT: ${{ secrets.SO_MANAGER_PORT }}
           SO_MANAGER_USER: ${{ secrets.SO_MANAGER_USER }}
           SO_MANAGER_SSH_KEY: ${{ secrets.SO_MANAGER_SSH_KEY }}
-          SO_RULES_DIR: ${{ secrets.SO_RULES_DIR }}
+          SO_UI_URL: ${{ secrets.SO_UI_URL }}
+          SO_UI_USERNAME: ${{ secrets.SO_UI_USERNAME }}
+          SO_UI_PASSWORD: ${{ secrets.SO_UI_PASSWORD }}
         run: py scripts\deploy_to_securityonion.py
