@@ -140,7 +140,7 @@ def ui_login(page):
 
 
 def create_suricata_detection(page, rule: dict):
-    page.goto(f"{SO_UI_URL}/detections", wait_until="networkidle")
+    page.goto(f"{SO_UI_URL}/#/detections", wait_until="networkidle")
     page.wait_for_timeout(4000)
 
     plus_clicked = False
@@ -214,7 +214,7 @@ def create_suricata_detection(page, rule: dict):
 
 
 def differential_update_suricata(page):
-    page.goto(f"{SO_UI_URL}/detections", wait_until="networkidle")
+    page.goto(f"{SO_UI_URL}/#/detections", wait_until="networkidle")
     page.wait_for_timeout(3000)
 
     page.get_by_role("button", name=re.compile(r"Options", re.I)).click()
