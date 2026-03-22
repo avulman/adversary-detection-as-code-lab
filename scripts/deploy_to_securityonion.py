@@ -5,7 +5,7 @@ import sys
 import time
 import tempfile
 import paramiko
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
 SO_SURICATA_DIR = ROOT / "detections" / "security-onion" / "suricata"
@@ -72,20 +72,13 @@ def get_ssh_client(key_path: str) -> paramiko.SSHClient:
     return client
 
 
-def run_ssh(client: paramiko.SSHClient, command: str):
-    stdin, stdout, stderr = client.exec_command(command)
-    exit_status = stdout.channel.recv_exit_status()
-    out = stdout.read().decode("utf-8", errors="ignore")
-    err = stderr.read().decode("utf-8", errors="ignore")
-    if exit_status != 0:
-        fail(f"Remote command failed: {command}\nSTDOUT:\n{out}\nSTDERR:\n{err}")
-    return out
-
-
 def parse_rule_file(path: Path):
     content = path.read_text(encoding="utf-8", errors="ignore").strip()
     if not content:
         fail(f"{path.name} is empty")
+
+    # Flatten to one line for the UI signature field
+    content = " ".join(content.split())
 
     msg_match = re.search(r'msg:"([^"]+)"', content)
     sid_match = re.search(r"sid:(\d+)", content)
@@ -120,96 +113,81 @@ def rule_exists_in_all_rulesets(client: paramiko.SSHClient, rule: dict) -> bool:
 
 def ui_login(page):
     page.goto(f"{SO_UI_URL}/login", wait_until="domcontentloaded")
-    print(page.content())
     page.wait_for_timeout(3000)
 
-    username_selectors = [
-        'input[name="username"]',
-        'input[id="username"]',
-        'input[type="text"]',
-        'input[placeholder*="user" i]',
-        'input[aria-label*="user" i]',
-    ]
-
-    password_selectors = [
-        'input[name="password"]',
-        'input[id="password"]',
-        'input[type="password"]',
-        'input[placeholder*="pass" i]',
-        'input[aria-label*="pass" i]',
-    ]
-
-    username_filled = False
-    for selector in username_selectors:
-        try:
-            page.locator(selector).first.fill(SO_UI_USERNAME, timeout=3000)
-            username_filled = True
-            break
-        except Exception:
-            pass
-
-    if not username_filled:
-        fail("Could not find username field on Security Onion login page")
-
-    password_filled = False
-    for selector in password_selectors:
-        try:
-            page.locator(selector).first.fill(SO_UI_PASSWORD, timeout=3000)
-            password_filled = True
-            break
-        except Exception:
-            pass
-
-    if not password_filled:
-        fail("Could not find password field on Security Onion login page")
-
-    login_button_patterns = [
-        re.compile("log in", re.I),
-        re.compile("sign in", re.I),
-        re.compile("^login$", re.I),
-    ]
-
-    clicked = False
-    for pattern in login_button_patterns:
-        try:
-            page.get_by_role("button", name=pattern).click(timeout=3000)
-            clicked = True
-            break
-        except Exception:
-            pass
-
-    if not clicked:
-        try:
-            page.locator('button[type="submit"]').first.click(timeout=3000)
-            clicked = True
-        except Exception:
-            pass
-
-    if not clicked:
-        fail("Could not find login button on Security Onion login page")
+    page.locator('[data-aid="login_email_input"]').fill(SO_UI_USERNAME)
+    page.locator('[data-aid="login_password_input"]').fill(SO_UI_PASSWORD)
+    page.locator('[data-aid="login_password_submit"]').click()
 
     page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(5000)
+
+    print("[PASS] Logged into Security Onion UI")
+
+
+def create_suricata_detection(page, rule: dict):
+    page.goto(f"{SO_UI_URL}/detections", wait_until="networkidle")
     page.wait_for_timeout(3000)
+
+    # Click the plus button
+    plus_button = page.locator("button").filter(has_text=re.compile(r"^\+$")).first
+    plus_button.click()
+    page.wait_for_timeout(2000)
+
+    # Select Suricata language
+    page.get_by_text(re.compile(r"Language", re.I)).click()
+    page.wait_for_timeout(1000)
+    page.get_by_text(re.compile(r"^Suricata$", re.I)).click()
+    page.wait_for_timeout(1000)
+
+    # Select GPL-2.0 license
+    page.get_by_text(re.compile(r"License", re.I)).click()
+    page.wait_for_timeout(1000)
+    page.get_by_text(re.compile(r"GPL-2.0", re.I)).click()
+    page.wait_for_timeout(1000)
+
+    # Fill signature
+    try:
+        page.get_by_label(re.compile(r"Signature", re.I)).fill(rule["content"])
+    except Exception:
+        page.locator("textarea").first.fill(rule["content"])
+
+    page.wait_for_timeout(1000)
+
+    # Click Create
+    page.get_by_role("button", name=re.compile(r"Create", re.I)).click()
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(4000)
+
+    print(f"[PASS] Created detection in UI for {rule['path'].name}")
 
 
 def differential_update_suricata(page):
     page.goto(f"{SO_UI_URL}/detections", wait_until="networkidle")
-    page.get_by_role("button", name=re.compile("options", re.I)).click()
+    page.wait_for_timeout(3000)
 
+    page.get_by_role("button", name=re.compile(r"Options", re.I)).click()
+    page.wait_for_timeout(1000)
+
+    # Change dropdown from ElastAlert to Suricata
     try:
-        page.get_by_label(re.compile("elastalert|engine|type", re.I)).click()
-        page.get_by_role("option", name=re.compile("suricata", re.I)).click()
-    except PlaywrightTimeoutError:
-        page.get_by_text(re.compile("elastalert", re.I)).click()
-        page.get_by_text(re.compile("^suricata$", re.I)).click()
+        page.get_by_text(re.compile(r"ElastAlert", re.I)).click()
+    except Exception:
+        page.locator('[role="combobox"]').first.click()
 
-    page.get_by_role("button", name=re.compile("differential update", re.I)).click()
-    page.wait_for_timeout(5000)
+    page.wait_for_timeout(1000)
+    page.get_by_text(re.compile(r"^Suricata$", re.I)).click()
+    page.wait_for_timeout(1000)
+
+    # Run differential update
+    page.get_by_role("button", name=re.compile(r"Differential Update", re.I)).click()
+    page.wait_for_timeout(8000)
+
+    print("[PASS] Ran Suricata Differential Update")
 
 
 def main():
-    required_ui = [SO_UI_URL, SO_UI_USERNAME, SO_UI_PASSWORD]
-    if not all(required_ui):
+    if not SO_UI_URL or not SO_UI_USERNAME or not SO_UI_PASSWORD:
         fail("Missing SO_UI_URL, SO_UI_USERNAME, or SO_UI_PASSWORD")
 
     rule_files = sorted(SO_SURICATA_DIR.glob("*.rules"))
@@ -244,19 +222,22 @@ def main():
             for rule in missing_rules:
                 print(f"[INFO] Creating detection in UI for {rule['path'].name}")
                 create_suricata_detection(page, rule)
-                print(f"[PASS] Created detection in UI for {rule['path'].name}")
 
             print("[INFO] Running Suricata Differential Update in UI")
             differential_update_suricata(page)
+
             browser.close()
 
-        time.sleep(8)
+        time.sleep(10)
 
         for rule in missing_rules:
             exists = rule_exists_in_all_rulesets(client, rule)
             print(f"[INFO] Post-update check for {rule['path'].name}: {exists}")
             if not exists:
-                fail(f"{rule['path'].name} still not present in /opt/so/rules/suricata/all-rulesets.rules after UI update")
+                fail(
+                    f"{rule['path'].name} still not present in "
+                    "/opt/so/rules/suricata/all-rulesets.rules after UI update"
+                )
 
         print("[PASS] Security Onion detections created and activated successfully")
 
