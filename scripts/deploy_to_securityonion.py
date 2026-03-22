@@ -118,7 +118,7 @@ def rule_exists_in_all_rulesets(client: paramiko.SSHClient, rule: dict) -> bool:
     return False
 
 
-ddef ui_login(page):
+def ui_login(page):
     page.goto(f"{SO_UI_URL}/login", wait_until="domcontentloaded")
     print(page.content())
     page.wait_for_timeout(3000)
