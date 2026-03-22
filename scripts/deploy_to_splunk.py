@@ -9,6 +9,7 @@ MITRE_ATTACK_DIR = ROOT / "detections" / "splunk" / "mitre-att&ck"
 SPLUNK_BASE_URL = os.getenv("SPLUNK_BASE_URL", "").rstrip("/")
 SPLUNK_USERNAME = os.getenv("SPLUNK_USERNAME", "")
 SPLUNK_PASSWORD = os.getenv("SPLUNK_PASSWORD", "")
+ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "")
 
 requests.packages.urllib3.disable_warnings()
 
@@ -39,7 +40,6 @@ def parse_detection_file(path: Path):
         "app",
         "cron_schedule",
         "disabled",
-        "email_to",
         "email_subject",
         "email_message",
     ]
@@ -58,6 +58,9 @@ def splunk_session():
     if not SPLUNK_BASE_URL or not SPLUNK_USERNAME or not SPLUNK_PASSWORD:
         fail("Missing SPLUNK_BASE_URL, SPLUNK_USERNAME, or SPLUNK_PASSWORD environment variables")
 
+    if not ALERT_EMAIL_TO:
+        fail("ALERT_EMAIL_TO environment variable is not set")
+
     s = requests.Session()
     s.auth = (SPLUNK_USERNAME, SPLUNK_PASSWORD)
     s.verify = False
@@ -75,26 +78,22 @@ def build_payload(metadata: dict, query: str):
         "search": query,
         "description": f'{metadata["description"]} | MITRE {metadata["mitre"]}',
 
-        # Scheduling
         "is_scheduled": "1",
         "cron_schedule": metadata["cron_schedule"],
         "disabled": metadata["disabled"],
 
-        # Only trigger if results exist
         "alert_type": "number of events",
         "alert_comparator": "greater than",
         "alert_threshold": "0",
         "alert.track": "1",
 
-        # Search window
         "dispatch.earliest_time": "-5m",
         "dispatch.latest_time": "now",
         "dispatch.ttl": "2p",
 
-        # Email action
         "actions": "email",
         "action.email": "1",
-        "action.email.to": metadata["email_to"],
+        "action.email.to": ALERT_EMAIL_TO,
         "action.email.subject": metadata["email_subject"],
         "action.email.message": metadata["email_message"],
         "action.email.include.results_link": "1",
@@ -136,7 +135,7 @@ def main():
         print(f"[INFO] Processing {path.name} -> alert '{name}'")
         print(f"[DEBUG] App={app} Owner={owner}")
         print(f"[DEBUG] Query={query[:200]}")
-        
+
         existing = get_saved_search(session, owner, app, name)
         print(f"[DEBUG] Existence check status={existing.status_code}")
 
