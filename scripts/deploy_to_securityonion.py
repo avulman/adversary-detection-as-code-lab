@@ -115,9 +115,26 @@ def ui_login(page):
     page.goto(f"{SO_UI_URL}/login", wait_until="domcontentloaded")
     page.wait_for_timeout(3000)
 
-    page.locator('[data-aid="login_email_input"] input').fill(SO_UI_USERNAME)
-    page.locator('[data-aid="login_password_input"] input').fill(SO_UI_PASSWORD)
-    page.locator('[data-aid="login_password_submit"]').click()
+    email = page.locator('[data-aid="login_email_input"] input')
+    password = page.locator('[data-aid="login_password_input"] input')
+
+    email.click()
+    email.type(SO_UI_USERNAME, delay=100)
+
+    password.click()
+    password.type(SO_UI_PASSWORD, delay=100)
+
+    page.wait_for_timeout(2000)
+
+    button = page.locator('[data-aid="login_password_submit"]')
+
+    # wait until enabled
+    page.wait_for_function(
+        "el => !el.disabled",
+        button
+    )
+
+    button.click()
 
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(5000)
