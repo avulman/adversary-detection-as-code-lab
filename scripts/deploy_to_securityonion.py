@@ -115,8 +115,8 @@ def ui_login(page):
     page.goto(f"{SO_UI_URL}/login", wait_until="domcontentloaded")
     page.wait_for_timeout(3000)
 
-    page.locator('[data-aid="login_email_input"]').fill(SO_UI_USERNAME)
-    page.locator('[data-aid="login_password_input"]').fill(SO_UI_PASSWORD)
+    page.locator('[data-aid="login_email_input"] input').fill(SO_UI_USERNAME)
+    page.locator('[data-aid="login_password_input"] input').fill(SO_UI_PASSWORD)
     page.locator('[data-aid="login_password_submit"]').click()
 
     page.wait_for_load_state("networkidle")
