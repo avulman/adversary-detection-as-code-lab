@@ -10,3 +10,4 @@
 
 index=sysmon EventCode=8
 | table _time SourceImage TargetImage StartAddress
+| sort - _time
