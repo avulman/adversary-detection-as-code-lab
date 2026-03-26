@@ -220,17 +220,38 @@ def create_suricata_detection(page, rule: dict):
 
 
 def differential_update_suricata(page):
-    page.goto(f"{SO_UI_URL}/#/detections", wait_until="networkidle")
-    page.wait_for_timeout(4000)
-
-    opened = False
-    option_selectors = [
-        'text=Options',
-        '[data-aid*="options"]',
-        'button:has-text("Options")',
-        '[role="button"]:has-text("Options")',
+    # We are on the detection detail page after creation.
+    # Go to the detections LIST page first.
+    list_opened = False
+    list_selectors = [
+        'a[href="#/detections"]',
+        '[data-aid="nav_detections"]',
+        'a:has-text("Detections")',
     ]
 
+    for selector in list_selectors:
+        try:
+            page.locator(selector).first.click(force=True, timeout=3000)
+            list_opened = True
+            break
+        except Exception:
+            pass
+
+    if not list_opened:
+        page.goto(f"{SO_UI_URL}/#/detections", wait_until="networkidle")
+        page.wait_for_timeout(4000)
+
+    page.wait_for_timeout(3000)
+
+    # Click Options on the LIST page
+    option_selectors = [
+        'button:has-text("Options")',
+        '[role="button"]:has-text("Options")',
+        '[data-aid*="options"]',
+        'text=Options',
+    ]
+
+    opened = False
     for selector in option_selectors:
         try:
             page.locator(selector).first.click(force=True, timeout=3000)
@@ -242,26 +263,23 @@ def differential_update_suricata(page):
     if not opened:
         Path("so_debug_page.html").write_text(page.content(), encoding="utf-8")
         print("[INFO] Wrote debug HTML to so_debug_page.html")
-        fail("Could not click Options on the Detections page")
+        fail("Could not click Options on the detections LIST page")
 
     page.wait_for_timeout(1000)
 
-    # engine dropdown -> Suricata
+    # Change engine from ElastAlert to Suricata
     try:
-        page.get_by_text(re.compile(r"ElastAlert", re.I)).click(force=True)
+        page.locator('[role="combobox"]').first.click(force=True)
+        page.wait_for_timeout(1000)
+        page.get_by_text(re.compile(r"^Suricata$", re.I)).click(force=True)
     except Exception:
-        try:
-            page.locator('[role="combobox"]').first.click(force=True)
-        except Exception:
-            Path("so_debug_page.html").write_text(page.content(), encoding="utf-8")
-            print("[INFO] Wrote debug HTML to so_debug_page.html")
-            fail("Could not open engine dropdown in Options menu")
+        Path("so_debug_page.html").write_text(page.content(), encoding="utf-8")
+        print("[INFO] Wrote debug HTML to so_debug_page.html")
+        fail("Could not set engine to Suricata")
 
     page.wait_for_timeout(1000)
-    page.get_by_text(re.compile(r"^Suricata$", re.I)).click(force=True)
-    page.wait_for_timeout(1000)
 
-    # differential update
+    # Click Differential Update
     try:
         page.get_by_text(re.compile(r"Differential Update", re.I)).click(force=True)
     except Exception:
