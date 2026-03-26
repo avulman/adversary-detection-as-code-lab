@@ -6,3 +6,4 @@
 | T1046 | Nmap SYN Scan | Suricata | Attacker VM (nmap) | Working | 5 | Strong signal |
 | T1055 | Process Injection | Sysmon | Splunk | Manual + Atomic | 5m | Working | 4 | Stable |
 | T1059.001 | PowerShell Execution | Sysmon | Splunk | Manual + Atomic | 5m | Working | 4 | Needs tuning |
+| T1071.001 | Suspicious HTTP User-Agent Python Requests | Suricata | Python requests test | Testing | 4 | Useful for scripted traffic |
