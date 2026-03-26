@@ -10,6 +10,8 @@ SCENARIO_DIR = ROOT / "validations" / "scenarios"
 SPLUNK_DIR = ROOT / "detections" / "splunk" / "mitre-att&ck"
 SO_SURICATA_DIR = ROOT / "detections" / "security-onion" / "suricata"
 
+DETECTIONS_DIR = ROOT / "detections"
+
 
 def fail(msg: str):
     print(f"[FAIL] {msg}")
@@ -25,6 +27,25 @@ def validate_common():
 
     if not SCENARIO_DIR.exists():
         fail("validations/scenarios directory is missing")
+
+
+def validate_pipeline_separation():
+    splunk_rules = list((ROOT / "detections" / "splunk").rglob("*.rules"))
+    so_spl = list((ROOT / "detections" / "security-onion").rglob("*.spl"))
+
+    if splunk_rules:
+        fail(
+            "Suricata .rules files found under detections/splunk: "
+            + ", ".join(str(p.relative_to(ROOT)) for p in splunk_rules)
+        )
+
+    if so_spl:
+        fail(
+            "Splunk .spl files found under detections/security-onion: "
+            + ", ".join(str(p.relative_to(ROOT)) for p in so_spl)
+        )
+
+    print("[PASS] Pipeline separation validated")
 
 
 def validate_splunk():
@@ -96,6 +117,7 @@ def validate_security_onion():
 
 def main():
     validate_common()
+    validate_pipeline_separation()
     validate_splunk()
     validate_security_onion()
     print("[PASS] Repository validation successful")
