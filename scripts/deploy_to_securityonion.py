@@ -217,25 +217,52 @@ def create_suricata_detection(page, rule: dict):
 
 def differential_update_suricata(page):
     page.goto(f"{SO_UI_URL}/#/detections", wait_until="networkidle")
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(4000)
 
-    page.get_by_role("button", name=re.compile(r"Options", re.I)).click()
+    opened = False
+    option_selectors = [
+        'text=Options',
+        '[data-aid*="options"]',
+        'button:has-text("Options")',
+        '[role="button"]:has-text("Options")',
+    ]
+
+    for selector in option_selectors:
+        try:
+            page.locator(selector).first.click(force=True, timeout=3000)
+            opened = True
+            break
+        except Exception:
+            pass
+
+    if not opened:
+        print(page.content())
+        fail("Could not click Options on the Detections page")
+
     page.wait_for_timeout(1000)
 
-    # Change dropdown from ElastAlert to Suricata
+    # engine dropdown -> Suricata
     try:
-        page.get_by_text(re.compile(r"ElastAlert", re.I)).click()
+        page.get_by_text(re.compile(r"ElastAlert", re.I)).click(force=True)
     except Exception:
-        page.locator('[role="combobox"]').first.click()
+        try:
+            page.locator('[role="combobox"]').first.click(force=True)
+        except Exception:
+            print(page.content())
+            fail("Could not open engine dropdown in Options menu")
 
     page.wait_for_timeout(1000)
-    page.get_by_text(re.compile(r"^Suricata$", re.I)).click()
+    page.get_by_text(re.compile(r"^Suricata$", re.I)).click(force=True)
     page.wait_for_timeout(1000)
 
-    # Run differential update
-    page.get_by_role("button", name=re.compile(r"Differential Update", re.I)).click()
+    # differential update
+    try:
+        page.get_by_text(re.compile(r"Differential Update", re.I)).click(force=True)
+    except Exception:
+        print(page.content())
+        fail("Could not click Differential Update")
+
     page.wait_for_timeout(8000)
-
     print("[PASS] Ran Suricata Differential Update")
 
 
