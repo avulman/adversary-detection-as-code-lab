@@ -165,7 +165,8 @@ def create_suricata_detection(page, rule: dict):
             pass
 
     if not plus_clicked:
-        print(page.content())
+        html = page.content()
+        print(html.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore"))
         fail("Could not find/click the create (+) button on the Detections page")
 
     page.wait_for_timeout(2500)
@@ -173,7 +174,8 @@ def create_suricata_detection(page, rule: dict):
     # Grab comboboxes in the create dialog
     comboboxes = page.locator('[role="combobox"]')
     if comboboxes.count() < 2:
-        print(page.content())
+        html = page.content()
+        print(html.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore"))
         fail("Could not find the Language/License dropdowns")
 
     # Language -> Suricata
@@ -197,7 +199,8 @@ def create_suricata_detection(page, rule: dict):
         try:
             page.locator("textarea").first.fill(rule["content"])
         except Exception:
-            print(page.content())
+            html = page.content()
+            print(html.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore"))
             fail("Could not fill Signature field")
 
     page.wait_for_timeout(1000)
@@ -206,7 +209,8 @@ def create_suricata_detection(page, rule: dict):
     try:
         page.get_by_role("button", name=re.compile(r"Create", re.I)).click()
     except Exception:
-        print(page.content())
+        html = page.content()
+        print(html.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore"))
         fail("Could not click Create button")
 
     page.wait_for_load_state("networkidle")
@@ -236,7 +240,8 @@ def differential_update_suricata(page):
             pass
 
     if not opened:
-        print(page.content())
+        html = page.content()
+        print(html.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore"))
         fail("Could not click Options on the Detections page")
 
     page.wait_for_timeout(1000)
@@ -248,7 +253,8 @@ def differential_update_suricata(page):
         try:
             page.locator('[role="combobox"]').first.click(force=True)
         except Exception:
-            print(page.content())
+            html = page.content()
+            print(html.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore"))
             fail("Could not open engine dropdown in Options menu")
 
     page.wait_for_timeout(1000)
@@ -259,7 +265,8 @@ def differential_update_suricata(page):
     try:
         page.get_by_text(re.compile(r"Differential Update", re.I)).click(force=True)
     except Exception:
-        print(page.content())
+        html = page.content()
+        print(html.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore"))
         fail("Could not click Differential Update")
 
     page.wait_for_timeout(8000)
