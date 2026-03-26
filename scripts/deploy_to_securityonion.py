@@ -267,18 +267,6 @@ def differential_update_suricata(page):
 
     page.wait_for_timeout(1000)
 
-    # Change engine from ElastAlert to Suricata
-    try:
-        page.locator('[role="combobox"]').first.click(force=True)
-        page.wait_for_timeout(1000)
-        page.get_by_text(re.compile(r"^Suricata$", re.I)).click(force=True)
-    except Exception:
-        Path("so_debug_page.html").write_text(page.content(), encoding="utf-8")
-        print("[INFO] Wrote debug HTML to so_debug_page.html")
-        fail("Could not set engine to Suricata")
-
-    page.wait_for_timeout(1000)
-
     # Click Differential Update
     try:
         page.get_by_text(re.compile(r"Differential Update", re.I)).click(force=True)
