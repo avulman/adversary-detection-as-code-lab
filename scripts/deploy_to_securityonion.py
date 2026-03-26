@@ -25,6 +25,12 @@ def fail(msg: str):
     sys.exit(1)
 
 
+def write_debug_html(page, filename: str = "so_debug_page.html"):
+    debug_path = ROOT / filename
+    debug_path.write_text(page.content(), encoding="utf-8")
+    print(f"[INFO] Wrote debug HTML to {debug_path}")
+
+
 def write_temp_key() -> str:
     if not SO_MANAGER_SSH_KEY:
         fail("SO_MANAGER_SSH_KEY environment variable is not set")
@@ -139,10 +145,12 @@ def ui_login(page):
     print("[PASS] Logged into Security Onion UI")
 
 
-def create_suricata_detection(page, rule: dict):
+def go_to_detections(page):
     page.goto(f"{SO_UI_URL}/#/detections", wait_until="networkidle")
     page.wait_for_timeout(4000)
 
+
+def open_create_detection_dialog(page):
     plus_clicked = False
     plus_selectors = [
         '[data-aid*="create"]',
@@ -165,21 +173,21 @@ def create_suricata_detection(page, rule: dict):
             pass
 
     if not plus_clicked:
-        Path("so_debug_page.html").write_text(page.content(), encoding="utf-8")
-        print("[INFO] Wrote debug HTML to so_debug_page.html")
+        write_debug_html(page)
         fail("Could not find/click the create (+) button on the Detections page")
 
     page.wait_for_timeout(2500)
 
-    # Grab comboboxes in the create dialog
-    comboboxes = page.locator('[role="combobox"]')
-    if comboboxes.count() < 2:
-        Path("so_debug_page.html").write_text(page.content(), encoding="utf-8")
-        print("[INFO] Wrote debug HTML to so_debug_page.html")
-        fail("Could not find the Language/License dropdowns")
 
+def set_rule_form_fields(page, rule: dict):
     # Language -> Suricata
     language = page.locator('#detection-language-create')
+    if language.count() == 0:
+        language = page.locator('#detection-language-edit')
+    if language.count() == 0:
+        write_debug_html(page)
+        fail("Could not find Language field")
+
     language.click(force=True)
     page.wait_for_timeout(1000)
     page.get_by_role("option", name=re.compile(r"^Suricata$", re.I)).click()
@@ -187,71 +195,246 @@ def create_suricata_detection(page, rule: dict):
 
     # License -> GPL-2.0
     license_box = page.locator('#detection-license-create')
+    if license_box.count() == 0:
+        license_box = page.locator('#detection-license-edit')
+    if license_box.count() == 0:
+        write_debug_html(page)
+        fail("Could not find License field")
+
     license_box.click(force=True)
     page.wait_for_timeout(1000)
     page.get_by_role("option", name=re.compile(r"GPL-2.0", re.I)).click()
     page.wait_for_timeout(1000)
 
     # Signature
-    try:
-        page.get_by_label(re.compile(r"Signature", re.I)).fill(rule["content"])
-    except Exception:
+    signature_selectors = [
+        '#detection-signature-create',
+        '#detection-signature-edit',
+        'textarea',
+        '[data-aid*="signature"] textarea',
+    ]
+
+    filled = False
+    for selector in signature_selectors:
         try:
-            page.locator("textarea").first.fill(rule["content"])
+            locator = page.locator(selector).first
+            if locator.count() > 0:
+                locator.click(force=True)
+                locator.fill(rule["content"])
+                filled = True
+                break
         except Exception:
-            Path("so_debug_page.html").write_text(page.content(), encoding="utf-8")
-            print("[INFO] Wrote debug HTML to so_debug_page.html")
-            fail("Could not fill Signature field")
+            pass
+
+    if not filled:
+        write_debug_html(page)
+        fail("Could not fill Signature field")
 
     page.wait_for_timeout(1000)
 
-    # Create
-    try:
-        page.get_by_role("button", name=re.compile(r"Create", re.I)).click()
-    except Exception:
-        Path("so_debug_page.html").write_text(page.content(), encoding="utf-8")
-        print("[INFO] Wrote debug HTML to so_debug_page.html")
-        fail("Could not click Create button")
 
+def click_button_by_name(page, pattern: str, failure_message: str):
+    candidates = [
+        page.get_by_role("button", name=re.compile(pattern, re.I)),
+        page.locator(f'text=/{pattern}/i'),
+    ]
+
+    for locator in candidates:
+        try:
+            locator.first.click(force=True, timeout=3000)
+            return
+        except Exception:
+            pass
+
+    write_debug_html(page)
+    fail(failure_message)
+
+
+def create_suricata_detection(page, rule: dict):
+    go_to_detections(page)
+    open_create_detection_dialog(page)
+    set_rule_form_fields(page, rule)
+    click_button_by_name(page, r"Create", "Could not click Create button")
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(4000)
+
+    # IMPORTANT: always return to detections list after create
+    go_to_detections(page)
 
     print(f"[PASS] Created detection in UI for {rule['path'].name}")
 
 
-def differential_update_suricata(page):
-    # We are on the detection detail page after creation.
-    # Go to the detections LIST page first.
-    list_opened = False
-    list_selectors = [
-        'a[href="#/detections"]',
-        '[data-aid="nav_detections"]',
-        'a:has-text("Detections")',
+def rule_exists_in_ui(page, rule: dict) -> bool:
+    go_to_detections(page)
+
+    search_selectors = [
+        'input[placeholder*="search" i]',
+        'input[type="text"]',
+        '[data-aid*="search"] input',
     ]
 
-    for selector in list_selectors:
+    for selector in search_selectors:
+        try:
+            box = page.locator(selector).first
+            if box.count() > 0:
+                box.fill("")
+                box.type(rule["msg"], delay=40)
+                page.wait_for_timeout(2000)
+                break
+        except Exception:
+            pass
+
+    try:
+        if page.get_by_text(rule["msg"], exact=False).count() > 0:
+            return True
+    except Exception:
+        pass
+
+    try:
+        if rule["sid"] and page.get_by_text(rule["sid"], exact=False).count() > 0:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def open_existing_rule(page, rule: dict) -> bool:
+    go_to_detections(page)
+
+    search_selectors = [
+        'input[placeholder*="search" i]',
+        'input[type="text"]',
+        '[data-aid*="search"] input',
+    ]
+
+    for selector in search_selectors:
+        try:
+            box = page.locator(selector).first
+            if box.count() > 0:
+                box.fill("")
+                box.type(rule["msg"], delay=40)
+                page.wait_for_timeout(2000)
+                break
+        except Exception:
+            pass
+
+    # Try to click the row/title for the rule
+    click_targets = [
+        page.get_by_text(rule["msg"], exact=False),
+    ]
+
+    if rule["sid"]:
+        click_targets.append(page.get_by_text(rule["sid"], exact=False))
+
+    for target in click_targets:
+        try:
+            target.first.click(force=True, timeout=3000)
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(3000)
+            return True
+        except Exception:
+            pass
+
+    return False
+
+
+def get_current_signature(page) -> str:
+    signature_selectors = [
+        '#detection-signature-edit',
+        '#detection-signature-create',
+        'textarea',
+        '[data-aid*="signature"] textarea',
+    ]
+
+    for selector in signature_selectors:
+        try:
+            locator = page.locator(selector).first
+            if locator.count() > 0:
+                value = locator.input_value()
+                return " ".join(value.split())
+        except Exception:
+            pass
+
+    return ""
+
+
+def update_suricata_detection(page, rule: dict):
+    opened = open_existing_rule(page, rule)
+    if not opened:
+        fail(f"Rule exists in UI but could not be opened for update: {rule['msg']}")
+
+    current_signature = get_current_signature(page)
+    desired_signature = " ".join(rule["content"].split())
+
+    if current_signature == desired_signature:
+        print(f"[INFO] No update required for {rule['path'].name}")
+        go_to_detections(page)
+        return
+
+    # Try to click Edit if present
+    edit_selectors = [
+        'button:has-text("Edit")',
+        '[role="button"]:has-text("Edit")',
+        '[data-aid*="edit"]',
+    ]
+
+    edit_clicked = False
+    for selector in edit_selectors:
         try:
             page.locator(selector).first.click(force=True, timeout=3000)
-            list_opened = True
+            page.wait_for_timeout(2000)
+            edit_clicked = True
             break
         except Exception:
             pass
 
-    if not list_opened:
-        page.goto(f"{SO_UI_URL}/#/detections", wait_until="networkidle")
-        page.wait_for_timeout(4000)
+    # Some pages may already be editable
+    if not edit_clicked:
+        print(f"[INFO] Edit button not found for {rule['path'].name}; attempting direct field update")
 
-    page.wait_for_timeout(3000)
+    set_rule_form_fields(page, rule)
 
-    # Click Options on the LIST page
-    option_selectors = [
-        'button:has-text("Options")',
-        '[role="button"]:has-text("Options")',
-        '[data-aid*="options"]',
-        'text=Options',
+    save_patterns = [
+        r"Save",
+        r"Update",
+        r"Submit",
     ]
 
+    saved = False
+    for pattern in save_patterns:
+        try:
+            click_button_by_name(page, pattern, f"Could not click {pattern} button")
+            saved = True
+            break
+        except SystemExit:
+            pass
+
+    if not saved:
+        write_debug_html(page)
+        fail(f"Could not save updated rule for {rule['path'].name}")
+
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(4000)
+
+    # IMPORTANT: always return to detections list after update
+    go_to_detections(page)
+
+    print(f"[PASS] Updated detection in UI for {rule['path'].name}")
+
+
+def differential_update_suricata(page):
+    # Always start from detections list
+    go_to_detections(page)
+
     opened = False
+    option_selectors = [
+        'text=Options',
+        '[data-aid*="options"]',
+        'button:has-text("Options")',
+        '[role="button"]:has-text("Options")',
+    ]
+
     for selector in option_selectors:
         try:
             page.locator(selector).first.click(force=True, timeout=3000)
@@ -261,18 +444,16 @@ def differential_update_suricata(page):
             pass
 
     if not opened:
-        Path("so_debug_page.html").write_text(page.content(), encoding="utf-8")
-        print("[INFO] Wrote debug HTML to so_debug_page.html")
+        write_debug_html(page)
         fail("Could not click Options on the detections LIST page")
 
     page.wait_for_timeout(1000)
 
-    # Click Differential Update
+    # Click Differential Update directly
     try:
         page.get_by_text(re.compile(r"Differential Update", re.I)).click(force=True)
     except Exception:
-        Path("so_debug_page.html").write_text(page.content(), encoding="utf-8")
-        print("[INFO] Wrote debug HTML to so_debug_page.html")
+        write_debug_html(page)
         fail("Could not click Differential Update")
 
     page.wait_for_timeout(8000)
@@ -295,26 +476,37 @@ def main():
     try:
         client = get_ssh_client(key_path)
 
-        missing_rules = []
-        for rule in rules:
-            exists = rule_exists_in_all_rulesets(client, rule)
-            print(f"[INFO] {rule['path'].name} exists in all-rulesets.rules: {exists}")
-            if not exists:
-                missing_rules.append(rule)
-
-        if not missing_rules:
-            print("[PASS] All rules already exist in all-rulesets.rules")
-            return
-
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page(ignore_https_errors=True)
 
             ui_login(page)
 
-            for rule in missing_rules:
-                print(f"[INFO] Creating detection in UI for {rule['path'].name}")
-                create_suricata_detection(page, rule)
+            pending_activation = []
+
+            for rule in rules:
+                exists_backend = rule_exists_in_all_rulesets(client, rule)
+                print(f"[INFO] {rule['path'].name} exists in all-rulesets.rules: {exists_backend}")
+
+                if exists_backend:
+                    continue
+
+                exists_ui = rule_exists_in_ui(page, rule)
+                print(f"[INFO] {rule['path'].name} exists in UI: {exists_ui}")
+
+                if exists_ui:
+                    print(f"[INFO] Updating existing detection in UI for {rule['path'].name}")
+                    update_suricata_detection(page, rule)
+                else:
+                    print(f"[INFO] Creating detection in UI for {rule['path'].name}")
+                    create_suricata_detection(page, rule)
+
+                pending_activation.append(rule)
+
+            if not pending_activation:
+                print("[PASS] All rules already active in all-rulesets.rules")
+                browser.close()
+                return
 
             print("[INFO] Running Suricata Differential Update in UI")
             differential_update_suricata(page)
@@ -323,7 +515,7 @@ def main():
 
         time.sleep(10)
 
-        for rule in missing_rules:
+        for rule in pending_activation:
             exists = rule_exists_in_all_rulesets(client, rule)
             print(f"[INFO] Post-update check for {rule['path'].name}: {exists}")
             if not exists:
@@ -332,7 +524,7 @@ def main():
                     "/opt/so/rules/suricata/all-rulesets.rules after UI update"
                 )
 
-        print("[PASS] Security Onion detections created and activated successfully")
+        print("[PASS] Security Onion detections created/updated and activated successfully")
 
     finally:
         if client:
