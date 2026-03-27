@@ -3,7 +3,7 @@ import json
 import os
 import re
 import sys
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, Page, BrowserContext
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -34,7 +34,7 @@ def log(msg: str):
     print(f"[INFO] {msg}")
 
 
-def write_debug_html(page, filename: str = "so_debug_page.html"):
+def write_debug_html(page: Page, filename: str = "so_debug_page.html"):
     debug_path = ROOT / filename
     debug_path.write_text(page.content(), encoding="utf-8")
     print(f"[INFO] Wrote debug HTML to {debug_path}")
@@ -197,7 +197,7 @@ def build_repo_state_changes(repo_state: dict, saved_state: dict) -> list[dict]:
     return changes
 
 
-def ui_login(page):
+def ui_login(page: Page):
     page.goto(f"{SO_UI_URL}/login", wait_until="domcontentloaded")
     page.wait_for_timeout(MEDIUM_WAIT_MS)
 
@@ -222,12 +222,21 @@ def ui_login(page):
     print("[PASS] Logged into Security Onion UI")
 
 
-def go_to_detections(page):
-    page.goto(f"{SO_UI_URL}/#/detections", wait_until="networkidle")
+def go_to_detections(page: Page):
+    page.goto(f"{SO_UI_URL}/#/detections", wait_until="domcontentloaded")
+    page.wait_for_load_state("networkidle")
     page.wait_for_timeout(LONG_WAIT_MS)
 
 
-def search_for_rule(page, text: str):
+def open_detections_in_fresh_tab(context: BrowserContext) -> Page:
+    page = context.new_page()
+    page.goto(f"{SO_UI_URL}/#/detections", wait_until="domcontentloaded")
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(LONG_WAIT_MS)
+    return page
+
+
+def search_for_rule(page: Page, text: str):
     go_to_detections(page)
 
     search_selectors = [
@@ -252,7 +261,7 @@ def search_for_rule(page, text: str):
     fail("Could not find the detections search box")
 
 
-def rule_candidates(page, rule: dict):
+def rule_candidates(page: Page, rule: dict):
     candidates = []
     if rule.get("sid"):
         candidates.append(page.get_by_text(rule["sid"], exact=False))
@@ -262,7 +271,7 @@ def rule_candidates(page, rule: dict):
     return candidates
 
 
-def find_rule_in_ui(page, rule: dict) -> bool:
+def find_rule_in_ui(page: Page, rule: dict) -> bool:
     lookup = rule.get("sid") or rule.get("msg") or rule["name"]
     search_for_rule(page, lookup)
 
@@ -276,7 +285,7 @@ def find_rule_in_ui(page, rule: dict) -> bool:
     return False
 
 
-def open_rule_in_ui(page, rule: dict) -> bool:
+def open_rule_in_ui(page: Page, rule: dict) -> bool:
     lookup = rule.get("sid") or rule.get("msg") or rule["name"]
     search_for_rule(page, lookup)
 
@@ -292,7 +301,7 @@ def open_rule_in_ui(page, rule: dict) -> bool:
     return False
 
 
-def open_create_detection_dialog(page):
+def open_create_detection_dialog(page: Page):
     go_to_detections(page)
 
     plus_selectors = [
@@ -319,7 +328,7 @@ def open_create_detection_dialog(page):
     fail("Could not find/click the create button on the Detections page")
 
 
-def fill_suricata_detection_form(page, rule: dict):
+def fill_suricata_detection_form(page: Page, rule: dict):
     language_selectors = [
         '#detection-language-create',
         '#detection-language-edit',
@@ -383,7 +392,7 @@ def fill_suricata_detection_form(page, rule: dict):
     fail("Could not fill Signature field")
 
 
-def click_first_matching_button(page, patterns: list[str], failure_message: str):
+def click_first_matching_button(page: Page, patterns: list[str], failure_message: str):
     for pattern in patterns:
         try:
             page.get_by_role("button", name=re.compile(pattern, re.I)).first.click(
@@ -399,7 +408,7 @@ def click_first_matching_button(page, patterns: list[str], failure_message: str)
     fail(failure_message)
 
 
-def get_current_signature(page) -> str:
+def get_current_signature(page: Page) -> str:
     signature_selectors = [
         '#detection-signature-edit',
         '#detection-signature-create',
@@ -416,7 +425,7 @@ def get_current_signature(page) -> str:
     return ""
 
 
-def create_suricata_rule_in_ui(page, rule: dict):
+def create_suricata_rule_in_ui(page: Page, rule: dict):
     log(f"Creating detection in UI for {rule['name']}")
     open_create_detection_dialog(page)
     fill_suricata_detection_form(page, rule)
@@ -426,7 +435,7 @@ def create_suricata_rule_in_ui(page, rule: dict):
     print(f"[PASS] Created detection in UI for {rule['name']}")
 
 
-def verify_suricata_rule_matches_ui(page, rule: dict):
+def verify_suricata_rule_matches_ui(page: Page, rule: dict):
     if not open_rule_in_ui(page, rule):
         fail(f"Rule was not found in UI after deployment: {rule['name']}")
 
@@ -443,13 +452,13 @@ def verify_suricata_rule_matches_ui(page, rule: dict):
     print(f"[PASS] Verified detection content in UI for {rule['name']}")
 
 
-def verify_suricata_rule_absent_in_ui(page, rule: dict):
+def verify_suricata_rule_absent_in_ui(page: Page, rule: dict):
     if find_rule_in_ui(page, rule):
         fail(f"Rule still appears in UI after deletion: {rule['name']}")
     print(f"[PASS] Verified detection removal in UI for {rule['name']}")
 
 
-def delete_suricata_rule_in_ui(page, rule: dict):
+def delete_suricata_rule_in_ui(page: Page, rule: dict):
     log(f"Deleting detection in UI for {rule['name']}")
 
     if not open_rule_in_ui(page, rule):
@@ -473,42 +482,47 @@ def delete_suricata_rule_in_ui(page, rule: dict):
     print(f"[PASS] Deleted detection in UI for {rule['name']}")
 
 
-def differential_update_suricata(page):
-    go_to_detections(page)
-
+def click_options_on_detections_page(page: Page):
     option_selectors = [
-        'text=Options',
         '[data-aid*="options"]',
         'button:has-text("Options")',
         '[role="button"]:has-text("Options")',
+        'text=Options',
+        'button[aria-label*="options" i]',
     ]
 
-    opened = False
     for selector in option_selectors:
         try:
-            page.locator(selector).first.click(force=True, timeout=3000)
-            opened = True
-            break
+            locator = page.locator(selector).first
+            if locator.count() > 0 and locator.is_visible(timeout=3000):
+                locator.click(force=True, timeout=3000)
+                page.wait_for_timeout(MEDIUM_WAIT_MS)
+                return
         except Exception:
             pass
 
-    if not opened:
-        write_debug_html(page)
-        fail("Could not click Options on the detections list page")
+    write_debug_html(page, "so_debug_options_failure.html")
+    fail("Could not click Options on the detections list page")
 
-    page.wait_for_timeout(SHORT_WAIT_MS)
 
+def differential_update_suricata(context: BrowserContext):
+    temp_page = open_detections_in_fresh_tab(context)
     try:
-        page.get_by_text(re.compile(r"Differential Update", re.I)).click(force=True)
-    except Exception:
-        write_debug_html(page)
-        fail("Could not click Differential Update")
+        click_options_on_detections_page(temp_page)
 
-    page.wait_for_timeout(10000)
-    print("[PASS] Ran Suricata Differential Update")
+        try:
+            temp_page.get_by_text(re.compile(r"Differential Update", re.I)).click(force=True)
+        except Exception:
+            write_debug_html(temp_page, "so_debug_differential_update_failure.html")
+            fail("Could not click Differential Update")
+
+        temp_page.wait_for_timeout(10000)
+        print("[PASS] Ran Suricata Differential Update")
+    finally:
+        temp_page.close()
 
 
-def apply_single_change(page, change: dict, saved_state: dict):
+def apply_single_change(page: Page, context: BrowserContext, change: dict, saved_state: dict):
     if change["engine"] == "zeek":
         fail(
             "Zeek state tracking is supported, but Zeek UI deployment logic has not "
@@ -528,7 +542,7 @@ def apply_single_change(page, change: dict, saved_state: dict):
 
     if change["action"] == "create":
         create_suricata_rule_in_ui(page, new_rule)
-        differential_update_suricata(page)
+        differential_update_suricata(context)
         verify_suricata_rule_matches_ui(page, new_rule)
         saved_state["suricata"][change["name"]] = new_rule["content"]
         save_state(saved_state)
@@ -536,7 +550,7 @@ def apply_single_change(page, change: dict, saved_state: dict):
 
     if change["action"] == "delete":
         delete_suricata_rule_in_ui(page, old_rule)
-        differential_update_suricata(page)
+        differential_update_suricata(context)
         verify_suricata_rule_absent_in_ui(page, old_rule)
         saved_state["suricata"].pop(change["name"], None)
         save_state(saved_state)
@@ -544,11 +558,11 @@ def apply_single_change(page, change: dict, saved_state: dict):
 
     if change["action"] == "update":
         delete_suricata_rule_in_ui(page, old_rule)
-        differential_update_suricata(page)
+        differential_update_suricata(context)
         verify_suricata_rule_absent_in_ui(page, old_rule)
 
         create_suricata_rule_in_ui(page, new_rule)
-        differential_update_suricata(page)
+        differential_update_suricata(context)
         verify_suricata_rule_matches_ui(page, new_rule)
 
         saved_state["suricata"][change["name"]] = new_rule["content"]
@@ -600,13 +614,15 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page(ignore_https_errors=True)
+        context = browser.new_context(ignore_https_errors=True)
+        page = context.new_page()
 
         try:
             ui_login(page)
-            apply_single_change(page, change, saved_state)
+            apply_single_change(page, context, change, saved_state)
             print("[PASS] Security Onion deployment completed successfully")
         finally:
+            context.close()
             browser.close()
 
 
