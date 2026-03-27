@@ -7,3 +7,4 @@
 | T1055 | Process Injection | Sysmon | Splunk | Manual + Atomic | 5m | Working | 4 | Stable |
 | T1059.001 | PowerShell Execution | Sysmon | Splunk | Manual + Atomic | 5m | Working | 4 | Needs tuning |
 | T1071.001 | Suspicious HTTP User-Agent Python Requests | Suricata | Python requests test | Testing | 4 | Useful for scripted traffic |
+| T1197 | BITS Download Activity | Suricata | bitsadmin / Start-BitsTransfer | Manual | Real-time | Working | 3 | Blends with normal Windows traffic |
