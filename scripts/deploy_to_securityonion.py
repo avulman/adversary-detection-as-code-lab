@@ -11,7 +11,8 @@ SO_BASE_DIR = ROOT / "detections" / "security-onion"
 SO_SURICATA_DIR = SO_BASE_DIR / "suricata"
 SO_ZEEK_DIR = SO_BASE_DIR / "zeek"
 
-STATE_FILE = ROOT / "state" / "securityonion_rule_state.json"
+STATE_DIR = ROOT / "state"
+STATE_FILE = STATE_DIR / "securityonion_rule_state.json"
 
 SO_UI_URL = os.getenv("SO_UI_URL", "").strip().rstrip("/")
 SO_UI_USERNAME = os.getenv("SO_UI_USERNAME", "").strip()
@@ -53,22 +54,21 @@ def extract_sid(content: str):
     return match.group(1) if match else None
 
 
-def ensure_state_file_exists():
+def ensure_state_dir():
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_state() -> dict:
+    ensure_state_dir()
+
     if not STATE_FILE.exists():
-        fail(
-            "Missing required state file: state/securityonion_rule_state.json. "
-            "Create it before running deployment."
-        )
+        return {"suricata": {}, "zeek": {}}
 
     if not STATE_FILE.is_file():
         fail(
             "state/securityonion_rule_state.json exists but is not a file. "
             "It must be a JSON file, not a directory."
         )
-
-
-def load_state() -> dict:
-    ensure_state_file_exists()
 
     try:
         raw = json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -105,6 +105,7 @@ def load_state() -> dict:
 
 
 def save_state(state: dict):
+    ensure_state_dir()
     STATE_FILE.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
 
 
@@ -160,7 +161,6 @@ def build_repo_state_changes(repo_state: dict, saved_state: dict) -> list[dict]:
         for name in sorted(repo_names - state_names):
             changes.append(
                 {
-                    "source": "repo_state",
                     "engine": engine,
                     "action": "create",
                     "name": name,
@@ -172,7 +172,6 @@ def build_repo_state_changes(repo_state: dict, saved_state: dict) -> list[dict]:
         for name in sorted(state_names - repo_names):
             changes.append(
                 {
-                    "source": "repo_state",
                     "engine": engine,
                     "action": "delete",
                     "name": name,
@@ -187,7 +186,6 @@ def build_repo_state_changes(repo_state: dict, saved_state: dict) -> list[dict]:
             if repo_content != state_content:
                 changes.append(
                     {
-                        "source": "repo_state",
                         "engine": engine,
                         "action": "update",
                         "name": name,
@@ -438,7 +436,7 @@ def verify_suricata_rule_matches_ui(page, rule: dict):
     if current_signature != desired_signature:
         fail(
             f"UI signature mismatch for {rule['name']}. "
-            "The detection exists, but the stored signature does not match the repo/state."
+            "The detection exists, but the stored signature does not match the repo."
         )
 
     go_to_detections(page)
@@ -510,99 +508,6 @@ def differential_update_suricata(page):
     print("[PASS] Ran Suricata Differential Update")
 
 
-def collect_suricata_ui_drift(page, saved_state: dict) -> list[dict]:
-    drifts = []
-
-    for name, content in sorted(saved_state.get("suricata", {}).items()):
-        expected_rule = parse_suricata_rule(name, content)
-        exists_in_ui = find_rule_in_ui(page, expected_rule)
-
-        if not exists_in_ui:
-            drifts.append(
-                {
-                    "source": "ui_drift",
-                    "engine": "suricata",
-                    "action": "repair_missing",
-                    "name": name,
-                    "new_content": content,
-                    "old_content": content,
-                }
-            )
-            continue
-
-        if not open_rule_in_ui(page, expected_rule):
-            drifts.append(
-                {
-                    "source": "ui_drift",
-                    "engine": "suricata",
-                    "action": "repair_missing",
-                    "name": name,
-                    "new_content": content,
-                    "old_content": content,
-                }
-            )
-            continue
-
-        current_signature = get_current_signature(page)
-        expected_signature = normalize_rule_content(content)
-
-        if current_signature != expected_signature:
-            drifts.append(
-                {
-                    "source": "ui_drift",
-                    "engine": "suricata",
-                    "action": "repair_mismatch",
-                    "name": name,
-                    "new_content": content,
-                    "old_content": content,
-                }
-            )
-
-        go_to_detections(page)
-
-    return drifts
-
-
-def select_effective_single_change(repo_state_changes: list[dict], ui_drift_changes: list[dict]) -> dict | None:
-    total = len(repo_state_changes) + len(ui_drift_changes)
-
-    log(
-        "Computed repo/state changes: "
-        + (
-            ", ".join(f"{c['engine']}:{c['action']}:{c['name']}" for c in repo_state_changes)
-            if repo_state_changes
-            else "none"
-        )
-    )
-    log(
-        "Computed UI drift changes: "
-        + (
-            ", ".join(f"{c['engine']}:{c['action']}:{c['name']}" for c in ui_drift_changes)
-            if ui_drift_changes
-            else "none"
-        )
-    )
-
-    if total == 0:
-        return None
-
-    if total > 1:
-        combined = repo_state_changes + ui_drift_changes
-        formatted = ", ".join(
-            f"{item['source']}:{item['engine']}:{item['action']}:{item['name']}"
-            for item in combined
-        )
-        fail(
-            "Only one effective Security Onion rule change is allowed per run. "
-            f"Detected {total} changes/drifts: {formatted}"
-        )
-
-    if repo_state_changes:
-        return repo_state_changes[0]
-
-    return ui_drift_changes[0]
-
-
 def apply_single_change(page, change: dict, saved_state: dict):
     if change["engine"] == "zeek":
         fail(
@@ -621,7 +526,7 @@ def apply_single_change(page, change: dict, saved_state: dict):
     if change["new_content"]:
         new_rule = parse_suricata_rule(change["name"], change["new_content"])
 
-    if change["source"] == "repo_state" and change["action"] == "create":
+    if change["action"] == "create":
         create_suricata_rule_in_ui(page, new_rule)
         differential_update_suricata(page)
         verify_suricata_rule_matches_ui(page, new_rule)
@@ -629,7 +534,7 @@ def apply_single_change(page, change: dict, saved_state: dict):
         save_state(saved_state)
         return
 
-    if change["source"] == "repo_state" and change["action"] == "delete":
+    if change["action"] == "delete":
         delete_suricata_rule_in_ui(page, old_rule)
         differential_update_suricata(page)
         verify_suricata_rule_absent_in_ui(page, old_rule)
@@ -637,7 +542,7 @@ def apply_single_change(page, change: dict, saved_state: dict):
         save_state(saved_state)
         return
 
-    if change["source"] == "repo_state" and change["action"] == "update":
+    if change["action"] == "update":
         delete_suricata_rule_in_ui(page, old_rule)
         differential_update_suricata(page)
         verify_suricata_rule_absent_in_ui(page, old_rule)
@@ -650,24 +555,7 @@ def apply_single_change(page, change: dict, saved_state: dict):
         save_state(saved_state)
         return
 
-    if change["source"] == "ui_drift" and change["action"] in {"repair_missing", "repair_mismatch"}:
-        if old_rule:
-            delete_suricata_rule_in_ui(page, old_rule)
-            differential_update_suricata(page)
-            verify_suricata_rule_absent_in_ui(page, old_rule)
-
-        create_suricata_rule_in_ui(page, new_rule)
-        differential_update_suricata(page)
-        verify_suricata_rule_matches_ui(page, new_rule)
-
-        saved_state["suricata"][change["name"]] = new_rule["content"]
-        save_state(saved_state)
-        return
-
-    fail(
-        f"Unsupported change type encountered: "
-        f"{change['source']}:{change['action']}:{change['name']}"
-    )
+    fail(f"Unsupported change action: {change['action']}")
 
 
 def main():
@@ -676,7 +564,39 @@ def main():
 
     saved_state = load_state()
     repo_state = collect_repo_state()
-    repo_state_changes = build_repo_state_changes(repo_state, saved_state)
+    changes = build_repo_state_changes(repo_state, saved_state)
+
+    log(f"Repo suricata rules: {sorted(repo_state['suricata'].keys())}")
+    log(f"State suricata rules: {sorted(saved_state['suricata'].keys())}")
+    log(f"Repo zeek rules: {sorted(repo_state['zeek'].keys())}")
+    log(f"State zeek rules: {sorted(saved_state['zeek'].keys())}")
+    log(
+        "Computed Security Onion repo/state changes: "
+        + (
+            ", ".join(f"{c['engine']}:{c['action']}:{c['name']}" for c in changes)
+            if changes
+            else "none"
+        )
+    )
+
+    if len(changes) > 1:
+        formatted = ", ".join(
+            f"{item['engine']}:{item['action']}:{item['name']}" for item in changes
+        )
+        fail(
+            "Only one Security Onion rule change is allowed per push. "
+            f"Detected {len(changes)} repo/state changes: {formatted}"
+        )
+
+    if not changes:
+        print("[PASS] No Security Onion repo/state changes detected")
+        return
+
+    change = changes[0]
+    log(
+        f"Processing single Security Onion repo/state change: "
+        f"{change['engine']}:{change['action']}:{change['name']}"
+    )
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -684,21 +604,7 @@ def main():
 
         try:
             ui_login(page)
-
-            ui_drift_changes = collect_suricata_ui_drift(page, saved_state)
-            effective_change = select_effective_single_change(repo_state_changes, ui_drift_changes)
-
-            if not effective_change:
-                print("[PASS] No Security Onion repo/state changes or UI drift detected")
-                return
-
-            log(
-                f"Processing single effective Security Onion change: "
-                f"{effective_change['source']}:{effective_change['engine']}:"
-                f"{effective_change['action']}:{effective_change['name']}"
-            )
-
-            apply_single_change(page, effective_change, saved_state)
+            apply_single_change(page, change, saved_state)
             print("[PASS] Security Onion deployment completed successfully")
         finally:
             browser.close()

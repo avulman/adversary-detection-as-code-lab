@@ -41,7 +41,6 @@ def validate_required_paths():
         VALIDATIONS_DIR,
         SCENARIOS_DIR,
         STATE_DIR,
-        STATE_FILE,
     ]
 
     for path in required_paths:
@@ -66,14 +65,17 @@ def validate_required_paths():
     if not STATE_DIR.is_dir():
         fail("state must be a directory")
 
-    if not STATE_FILE.is_file():
+    if STATE_FILE.exists() and not STATE_FILE.is_file():
         fail(
-            "state/securityonion_rule_state.json must exist as a JSON file. "
-            "It cannot be a directory."
+            "state/securityonion_rule_state.json exists but is not a file. "
+            "It must be a JSON file, not a directory."
         )
 
 
 def load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {"suricata": {}, "zeek": {}}
+
     try:
         raw = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
