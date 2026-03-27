@@ -238,7 +238,22 @@ def diff_security_onion_repo_vs_state(repo_state: dict, saved_state: dict) -> li
 def validate_single_security_onion_change():
     saved_state = load_state()
     repo_state = collect_security_onion_repo_rules()
+
+    log(f"Repo suricata rules: {sorted(repo_state['suricata'].keys())}")
+    log(f"State suricata rules: {sorted(saved_state['suricata'].keys())}")
+    log(f"Repo zeek rules: {sorted(repo_state['zeek'].keys())}")
+    log(f"State zeek rules: {sorted(saved_state['zeek'].keys())}")
+
     changes = diff_security_onion_repo_vs_state(repo_state, saved_state)
+
+    log(
+        "Computed Security Onion repo/state changes: "
+        + (
+            ", ".join(f"{c['engine']}:{c['action']}:{c['name']}" for c in changes)
+            if changes
+            else "none"
+        )
+    )
 
     if len(changes) > 1:
         formatted = ", ".join(
@@ -246,17 +261,17 @@ def validate_single_security_onion_change():
         )
         fail(
             "Only one Security Onion rule change is allowed per push. "
-            f"Detected {len(changes)} changes: {formatted}"
+            f"Detected {len(changes)} repo/state changes: {formatted}"
         )
 
     if len(changes) == 1:
         item = changes[0]
         log(
-            "Validated single Security Onion change: "
+            "Validated single Security Onion repo/state change: "
             f"{item['engine']}:{item['action']}:{item['name']}"
         )
     else:
-        log("No Security Onion rule changes detected against state file")
+        log("No Security Onion repo/state changes detected against state file")
 
 
 def main():
