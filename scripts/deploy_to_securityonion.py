@@ -458,6 +458,51 @@ def verify_suricata_rule_present_in_ui(page: Page, rule: dict):
     print(f"[PASS] Verified detection exists in UI for {rule['name']}")
 
 
+def extract_sid(content: str) -> str | None:
+    match = re.search(r"\bsid\s*:\s*(\d+)\b", content, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def validate_suricata_sids(repo_state: dict, saved_state: dict):
+    repo_rules = repo_state.get("suricata", {})
+    state_rules = saved_state.get("suricata", {})
+
+    repo_sid_to_names = {}
+    state_sid_to_names = {}
+
+    for name, content in repo_rules.items():
+        sid = extract_sid(content)
+        if not sid:
+            fail(f"Suricata rule missing sid: {name}")
+        repo_sid_to_names.setdefault(sid, []).append(name)
+
+    for name, content in state_rules.items():
+        sid = extract_sid(content)
+        if not sid:
+            fail(f"State Suricata rule missing sid: {name}")
+        state_sid_to_names.setdefault(sid, []).append(name)
+
+    repo_dupes = {sid: names for sid, names in repo_sid_to_names.items() if len(names) > 1}
+    if repo_dupes:
+        details = "; ".join(f"sid:{sid} -> {', '.join(names)}" for sid, names in sorted(repo_dupes.items()))
+        fail(f"Duplicate Suricata SID(s) found in repo: {details}")
+
+    collisions = []
+    for sid, repo_names in repo_sid_to_names.items():
+        if sid not in state_sid_to_names:
+            continue
+
+        for repo_name in repo_names:
+            for state_name in state_sid_to_names[sid]:
+                if repo_name != state_name:
+                    collisions.append(
+                        f"sid:{sid} -> repo:{repo_name} conflicts with state:{state_name}"
+                    )
+
+    if collisions:
+        fail("Suricata SID collision(s) found between repo and state: " + "; ".join(collisions))
+
+
 def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
     temp_page = open_detections_in_fresh_tab(context)
     try:
@@ -744,6 +789,7 @@ def main():
 
     saved_state = load_state()
     repo_state = collect_repo_state()
+    validate_suricata_sids(repo_state, saved_state)
     changes = build_repo_state_changes(repo_state, saved_state)
 
     log(f"Repo suricata rules: {sorted(repo_state['suricata'].keys())}")
