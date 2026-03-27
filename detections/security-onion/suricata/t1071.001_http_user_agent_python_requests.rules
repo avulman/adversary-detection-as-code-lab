@@ -1,1 +1,1 @@
-alert http any any -> $HOME_NET any (msg:"T1071.001 Suspicious HTTP User-Agent Python Requests"; http.user_agent; content:"python-requests"; nocase; sid:1000005; rev:1;)
+alert http any any -> $HOME_NET any (msg:"T1071.001 Suspicious HTTP User-Agent Python Requests"; http.user_agent; content:"python-requests"; nocase; sid:1000004; rev:1;)
