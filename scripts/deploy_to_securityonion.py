@@ -512,50 +512,31 @@ def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
     fail(f"Rule still appears in UI after deletion: {rule['name']}")
 
 
-def row_checkbox_is_checked(row: Locator) -> bool:
+def detection_checkbox_is_checked(page: Page) -> bool:
     checkbox_candidates = [
-        row.locator('input#multiselect-checkbox'),
-        row.locator('input[type="checkbox"]'),
-        row.locator('[role="checkbox"]'),
+        page.locator('input#multiselect-checkbox').first,
+        page.locator('input[type="checkbox"]#multiselect-checkbox').first,
+        page.locator('input[type="checkbox"]').first,
     ]
 
-    for group in checkbox_candidates:
+    for checkbox in checkbox_candidates:
         try:
-            count = group.count()
-            for i in range(count):
-                candidate = group.nth(i)
+            if checkbox.count() == 0:
+                continue
 
-                # Security Onion/Vuetify case from your inspector:
-                # checked row has value="true"
-                try:
-                    value_attr = candidate.get_attribute("value")
-                    if value_attr is not None and value_attr.strip().lower() == "true":
-                        return True
-                except Exception:
-                    pass
+            value_attr = checkbox.get_attribute("value")
+            if value_attr is not None and value_attr.strip().lower() == "true":
+                return True
 
-                # Standard checkbox fallback
-                try:
-                    if candidate.is_checked():
-                        return True
-                except Exception:
-                    pass
+            try:
+                if checkbox.is_checked():
+                    return True
+            except Exception:
+                pass
 
-                # ARIA fallback
-                try:
-                    aria_checked = candidate.get_attribute("aria-checked")
-                    if aria_checked is not None and aria_checked.strip().lower() == "true":
-                        return True
-                except Exception:
-                    pass
-
-                # Class/icon fallback
-                try:
-                    cls = candidate.get_attribute("class") or ""
-                    if "fa-square-check" in cls or "mdi-checkbox-marked" in cls:
-                        return True
-                except Exception:
-                    pass
+            aria_checked = checkbox.get_attribute("aria-checked")
+            if aria_checked is not None and aria_checked.strip().lower() == "true":
+                return True
         except Exception:
             pass
 
@@ -563,34 +544,33 @@ def row_checkbox_is_checked(row: Locator) -> bool:
 
 
 def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
-    row = find_rule_row_in_ui(page, rule)
-    if row is None:
-        return False
+    lookup = rule.get("msg") or rule["name"]
+    search_for_rule(page, lookup)
 
-    click_targets = [
-        row.locator('input#multiselect-checkbox').first,
-        row.locator('input[type="checkbox"]').first,
-        row.locator('.v-selection-control__input').first,
-        row.locator('.v-checkbox-btn').first,
-        row.locator('[role="checkbox"]').first,
+    checkbox_candidates = [
+        page.locator('input#multiselect-checkbox').first,
+        page.locator('input[type="checkbox"]#multiselect-checkbox').first,
+        page.locator('input[type="checkbox"]').first,
+        page.locator('.v-selection-control__input input[type="checkbox"]').first,
+        page.locator('.v-checkbox-btn input[type="checkbox"]').first,
     ]
 
-    for target in click_targets:
+    for checkbox in checkbox_candidates:
         try:
-            if target.count() == 0:
+            if checkbox.count() == 0:
                 continue
 
-            target.click(force=True, timeout=3000)
+            checkbox.click(force=True, timeout=3000)
             page.wait_for_timeout(MEDIUM_WAIT_MS)
 
-            if row_checkbox_is_checked(row):
-                log(f"Confirmed row checkbox selected for {rule.get('msg') or rule['name']}")
+            if detection_checkbox_is_checked(page):
+                log(f"Confirmed filtered detection checkbox selected for {lookup}")
                 return True
         except Exception:
             pass
 
-    write_debug_html(page, "so_debug_row_checkbox_failure.html")
-    print_page_debug(page, f"row checkbox selection failure for {rule.get('msg') or rule['name']}")
+    write_debug_html(page, "so_debug_filtered_checkbox_failure.html")
+    print_page_debug(page, f"filtered checkbox selection failure for {lookup}")
     return False
 
 
