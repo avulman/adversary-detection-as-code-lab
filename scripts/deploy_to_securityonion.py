@@ -313,8 +313,7 @@ def find_rule_row_in_ui(page: Page, rule: dict) -> Locator | None:
 
 
 def find_rule_in_ui(page: Page, rule: dict) -> bool:
-    row = find_rule_row_in_ui(page, rule)
-    return row is not None
+    return find_rule_row_in_ui(page, rule) is not None
 
 
 def open_rule_in_ui(page: Page, rule: dict) -> bool:
@@ -328,10 +327,6 @@ def open_rule_in_ui(page: Page, rule: dict) -> bool:
         click_targets.append(
             row.get_by_text(re.compile(rf"^{re.escape(rule['msg'])}$")).first
         )
-    click_targets.append(row.get_by_text(rule["name"], exact=True).first)
-    click_targets.append(
-        row.get_by_text(re.compile(rf"^{re.escape(rule['name'])}$")).first
-    )
 
     for target in click_targets:
         try:
@@ -495,27 +490,67 @@ def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
     fail(f"Rule still appears in UI after deletion: {rule['name']}")
 
 
+def row_checkbox_is_checked(row: Locator) -> bool:
+    checkbox_candidates = [
+        row.locator('input[type="checkbox"]'),
+        row.locator('[role="checkbox"]'),
+    ]
+
+    for group in checkbox_candidates:
+        try:
+            count = group.count()
+            for i in range(count):
+                candidate = group.nth(i)
+                try:
+                    checked = candidate.is_checked()
+                    return checked
+                except Exception:
+                    try:
+                        aria_checked = candidate.get_attribute("aria-checked")
+                        if aria_checked is not None:
+                            return aria_checked.lower() == "true"
+                    except Exception:
+                        pass
+                    try:
+                        cls = candidate.get_attribute("class") or ""
+                        if "fa-square-check" in cls or "mdi-checkbox-marked" in cls:
+                            return True
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    return False
+
+
 def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
     row = find_rule_row_in_ui(page, rule)
     if row is None:
         return False
 
-    checkbox_selectors = [
-        'input[type="checkbox"]',
-        '[role="checkbox"]',
-        'label:has(input[type="checkbox"])',
+    click_targets = [
+        row.locator('input[type="checkbox"]').first,
+        row.locator('[role="checkbox"]').first,
+        row.locator('.v-selection-control__input').first,
+        row.locator('.v-checkbox-btn').first,
     ]
 
-    for selector in checkbox_selectors:
+    for target in click_targets:
         try:
-            checkbox = row.locator(selector).first
-            if checkbox.count() > 0:
-                checkbox.click(force=True, timeout=3000)
-                page.wait_for_timeout(MEDIUM_WAIT_MS)
+            if target.count() == 0:
+                continue
+
+            target.click(force=True, timeout=3000)
+            page.wait_for_timeout(MEDIUM_WAIT_MS)
+
+            if row_checkbox_is_checked(row):
+                log(f"Confirmed row checkbox selected for {rule.get('msg') or rule['name']}")
                 return True
         except Exception:
             pass
 
+    write_debug_html(page, "so_debug_row_checkbox_failure.html")
+    print_page_debug(page, f"row checkbox selection failure for {rule.get('msg') or rule['name']}")
     return False
 
 
@@ -568,67 +603,6 @@ def choose_bulk_action_delete(page: Page):
     except Exception:
         pass
 
-    select_candidates = page.locator("select")
-    try:
-        select_count = select_candidates.count()
-        for i in range(select_count):
-            try:
-                select_box = select_candidates.nth(i)
-                option_locator = select_box.locator("option")
-                option_count = option_locator.count()
-                labels = []
-                for j in range(option_count):
-                    try:
-                        labels.append(option_locator.nth(j).inner_text().strip())
-                    except Exception:
-                        pass
-
-                lower_labels = {label.lower() for label in labels}
-                if "enable" in lower_labels and "delete" in lower_labels:
-                    for label in labels:
-                        if label.lower() == "delete":
-                            select_box.select_option(label=label)
-                            page.wait_for_timeout(MEDIUM_WAIT_MS)
-                            return
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    combobox_candidates = [
-        page.get_by_role("combobox"),
-        page.locator('[role="combobox"]'),
-        page.locator('input[aria-haspopup="listbox"]'),
-    ]
-
-    for candidate_group in combobox_candidates:
-        try:
-            count = candidate_group.count()
-            for i in range(count):
-                try:
-                    combo = candidate_group.nth(i)
-                    text_value = ""
-                    try:
-                        text_value = combo.inner_text().strip()
-                    except Exception:
-                        try:
-                            text_value = combo.input_value().strip()
-                        except Exception:
-                            pass
-
-                    if text_value and text_value.lower() != "enable":
-                        continue
-
-                    combo.click(force=True, timeout=3000)
-                    page.wait_for_timeout(SHORT_WAIT_MS)
-                    page.get_by_role("option", name=re.compile(r"^Delete$", re.I)).click(force=True, timeout=3000)
-                    page.wait_for_timeout(MEDIUM_WAIT_MS)
-                    return
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
     write_debug_html(page, "so_debug_bulk_action_failure.html")
     print_page_debug(page, "bulk action delete failure")
     fail("Could not set Bulk Action to Delete")
@@ -671,15 +645,13 @@ def delete_suricata_rule_in_ui(page: Page, rule: dict):
     log(f"Deleting detection in UI for {rule['name']}")
 
     if not select_rule_checkbox_in_list(page, rule):
-        write_debug_html(page, "so_debug_delete_checkbox_failure.html")
-        print_page_debug(page, f"delete checkbox failure for {rule.get('msg') or rule['name']}")
-        log(f"Rule not found in UI for deletion; continuing: {rule['name']}")
-        return
+        log(f"Rule checkbox could not be selected for deletion: {rule['name']}")
+        fail(f"Rule was found but could not be selected for deletion: {rule['name']}")
 
     choose_bulk_action_delete(page)
     click_go_button(page)
     go_to_detections(page)
-    print(f"[PASS] Deleted detection in UI for {rule['name']}")
+    print(f"[PASS] Delete action submitted in UI for {rule['name']}")
 
 
 def click_options_on_detections_page(page: Page):
