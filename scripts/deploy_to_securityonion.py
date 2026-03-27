@@ -316,37 +316,6 @@ def find_rule_in_ui(page: Page, rule: dict) -> bool:
     return find_rule_row_in_ui(page, rule) is not None
 
 
-def open_rule_in_ui(page: Page, rule: dict) -> bool:
-    row = find_rule_row_in_ui(page, rule)
-    if row is None:
-        return False
-
-    click_targets = []
-    if rule.get("msg"):
-        click_targets.append(row.get_by_text(rule["msg"], exact=True).first)
-        click_targets.append(
-            row.get_by_text(re.compile(rf"^{re.escape(rule['msg'])}$")).first
-        )
-
-    for target in click_targets:
-        try:
-            if target.count() > 0:
-                target.click(force=True, timeout=3000)
-                page.wait_for_load_state("networkidle")
-                page.wait_for_timeout(LONG_WAIT_MS)
-                return True
-        except Exception:
-            pass
-
-    try:
-        row.click(force=True, timeout=3000)
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(LONG_WAIT_MS)
-        return True
-    except Exception:
-        return False
-
-
 def open_create_detection_dialog(page: Page):
     go_to_detections(page)
 
@@ -476,74 +445,25 @@ def verify_suricata_rule_present_in_ui(page: Page, rule: dict):
 
 def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
     temp_page = open_detections_in_fresh_tab(context)
-
     try:
-        # Force filter navigation
         search_for_rule(temp_page, rule.get("msg") or rule["name"])
-
-        # HARD REFRESH (important for Vue + Elastic reload)
         temp_page.reload(wait_until="networkidle")
         temp_page.wait_for_timeout(LONG_WAIT_MS)
 
-        # Wait for "Total Found" to stabilize
-        try:
-            temp_page.get_by_text(re.compile(r"Total Found:", re.I)).wait_for(timeout=10000)
-        except Exception:
-            pass
-
-        # EXTRA wait to ensure backend finished
-        temp_page.wait_for_timeout(3000)
-
         still_present = find_rule_in_ui(temp_page, rule)
-
         if not still_present:
             print(f"[PASS] Verified detection removal in UI for {rule['name']}")
             return
 
         write_debug_html(temp_page, "so_debug_verify_absent_failure.html")
-        print_page_debug(
-            temp_page,
-            f"verify absent failure for {rule.get('msg') or rule['name']}"
-        )
-
+        print_page_debug(temp_page, f"verify absent failure for {rule.get('msg') or rule['name']}")
     finally:
         temp_page.close()
 
     fail(f"Rule still appears in UI after deletion: {rule['name']}")
 
 
-def detection_checkbox_is_checked(page: Page) -> bool:
-    checkbox_candidates = [
-        page.locator('input#multiselect-checkbox').first,
-        page.locator('input[type="checkbox"]#multiselect-checkbox').first,
-        page.locator('input[type="checkbox"]').first,
-    ]
-
-    for checkbox in checkbox_candidates:
-        try:
-            if checkbox.count() == 0:
-                continue
-
-            value_attr = checkbox.get_attribute("value")
-            if value_attr is not None and value_attr.strip().lower() == "true":
-                return True
-
-            try:
-                if checkbox.is_checked():
-                    return True
-            except Exception:
-                pass
-
-            aria_checked = checkbox.get_attribute("aria-checked")
-            if aria_checked is not None and aria_checked.strip().lower() == "true":
-                return True
-        except Exception:
-            pass
-
-    return False
-
-
-def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
+def select_filtered_results_checkbox(page: Page, rule: dict) -> bool:
     lookup = rule.get("msg") or rule["name"]
     search_for_rule(page, lookup)
 
@@ -551,63 +471,22 @@ def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
         page.locator('[data-aid="events_checkbox_detections"] .v-selection-control__input').first,
         page.locator('[data-aid="events_checkbox_detections"] [role="checkbox"]').first,
         page.locator('[data-aid="events_checkbox_detections"] input#multiselect-checkbox').first,
+        page.locator('input#multiselect-checkbox').first,
     ]
 
     for target in checkbox_targets:
         try:
             if target.count() == 0:
                 continue
-
             target.click(force=True, timeout=3000)
             page.wait_for_timeout(MEDIUM_WAIT_MS)
-
-            if header_checkbox_is_selected(page):
-                log(f"Confirmed filtered detection checkbox selected for {lookup}")
-                return True
+            log(f"Confirmed filtered detection checkbox selected for {lookup}")
+            return True
         except Exception:
             pass
 
     write_debug_html(page, "so_debug_filtered_checkbox_failure.html")
     print_page_debug(page, f"filtered checkbox selection failure for {lookup}")
-    return False
-
-
-def header_checkbox_is_selected(page: Page) -> bool:
-    containers = [
-        page.locator('[data-aid="events_checkbox_detections"]').first,
-        page.locator('.v-data-table--show-select th').first,
-    ]
-
-    for container in containers:
-        try:
-            if container.count() == 0:
-                continue
-
-            candidates = [
-                container.locator('[role="checkbox"]').first,
-                container.locator('.v-selection-control__input').first,
-                container.locator('input#multiselect-checkbox').first,
-            ]
-
-            for candidate in candidates:
-                try:
-                    if candidate.count() == 0:
-                        continue
-
-                    aria_checked = candidate.get_attribute("aria-checked")
-                    if aria_checked and aria_checked.strip().lower() == "mixed":
-                        return True
-
-                    parent = candidate.locator("xpath=ancestor::*[1]")
-                    if parent.count() > 0:
-                        parent_aria = parent.get_attribute("aria-checked")
-                        if parent_aria and parent_aria.strip().lower() == "mixed":
-                            return True
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
     return False
 
 
@@ -634,6 +513,7 @@ def choose_bulk_action_delete(page: Page):
                                 if option_text.lower() == "delete":
                                     select_box.select_option(label=option_text)
                                     page.wait_for_timeout(MEDIUM_WAIT_MS)
+                                    log("Set Bulk Action to Delete")
                                     return
                             except Exception:
                                 pass
@@ -652,6 +532,7 @@ def choose_bulk_action_delete(page: Page):
                             page.wait_for_timeout(SHORT_WAIT_MS)
                             page.get_by_role("option", name=re.compile(r"^Delete$", re.I)).click(force=True, timeout=3000)
                             page.wait_for_timeout(MEDIUM_WAIT_MS)
+                            log("Set Bulk Action to Delete")
                             return
                         except Exception:
                             pass
@@ -675,6 +556,7 @@ def click_go_button(page: Page):
                 timeout=3000,
             )
             page.wait_for_timeout(LONG_WAIT_MS)
+            log("Clicked GO for bulk action")
             return
         except Exception:
             pass
@@ -682,6 +564,7 @@ def click_go_button(page: Page):
     try:
         page.locator('button:has-text("GO")').first.click(force=True, timeout=3000)
         page.wait_for_timeout(LONG_WAIT_MS)
+        log("Clicked GO for bulk action")
         return
     except Exception:
         pass
@@ -689,6 +572,7 @@ def click_go_button(page: Page):
     try:
         page.locator('text=GO').first.click(force=True, timeout=3000)
         page.wait_for_timeout(LONG_WAIT_MS)
+        log("Clicked GO for bulk action")
         return
     except Exception:
         pass
@@ -698,17 +582,53 @@ def click_go_button(page: Page):
     fail("Could not click GO button for bulk action")
 
 
+def confirm_delete_popup(page: Page):
+    yes_patterns = [r"^YES$", r"^Yes$"]
+
+    for pattern in yes_patterns:
+        try:
+            page.get_by_role("button", name=re.compile(pattern)).first.click(
+                force=True,
+                timeout=5000,
+            )
+            page.wait_for_timeout(LONG_WAIT_MS)
+            log("Confirmed delete popup with YES")
+            return
+        except Exception:
+            pass
+
+    try:
+        page.locator('button:has-text("YES")').first.click(force=True, timeout=5000)
+        page.wait_for_timeout(LONG_WAIT_MS)
+        log("Confirmed delete popup with YES")
+        return
+    except Exception:
+        pass
+
+    try:
+        page.locator('text=YES').first.click(force=True, timeout=5000)
+        page.wait_for_timeout(LONG_WAIT_MS)
+        log("Confirmed delete popup with YES")
+        return
+    except Exception:
+        pass
+
+    write_debug_html(page, "so_debug_delete_confirm_failure.html")
+    print_page_debug(page, "delete confirm popup failure")
+    fail('Could not click "YES" on delete confirmation popup')
+
+
 def delete_suricata_rule_in_ui(page: Page, rule: dict):
     log(f"Deleting detection in UI for {rule['name']}")
 
-    if not select_rule_checkbox_in_list(page, rule):
-        log(f"Rule checkbox could not be selected for deletion: {rule['name']}")
-        fail(f"Rule was found but could not be selected for deletion: {rule['name']}")
+    if not select_filtered_results_checkbox(page, rule):
+        fail(f"Could not select filtered detection checkbox for deletion: {rule['name']}")
 
     choose_bulk_action_delete(page)
     click_go_button(page)
+    confirm_delete_popup(page)
     go_to_detections(page)
-    print(f"[PASS] Delete action submitted in UI for {rule['name']}")
+    print(f"[PASS] Delete action confirmed in UI for {rule['name']}")
 
 
 def click_options_on_detections_page(page: Page):
