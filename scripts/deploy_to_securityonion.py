@@ -547,23 +547,21 @@ def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
     lookup = rule.get("msg") or rule["name"]
     search_for_rule(page, lookup)
 
-    checkbox_candidates = [
-        page.locator('input#multiselect-checkbox').first,
-        page.locator('input[type="checkbox"]#multiselect-checkbox').first,
-        page.locator('input[type="checkbox"]').first,
-        page.locator('.v-selection-control__input input[type="checkbox"]').first,
-        page.locator('.v-checkbox-btn input[type="checkbox"]').first,
+    checkbox_targets = [
+        page.locator('[data-aid="events_checkbox_detections"] .v-selection-control__input').first,
+        page.locator('[data-aid="events_checkbox_detections"] [role="checkbox"]').first,
+        page.locator('[data-aid="events_checkbox_detections"] input#multiselect-checkbox').first,
     ]
 
-    for checkbox in checkbox_candidates:
+    for target in checkbox_targets:
         try:
-            if checkbox.count() == 0:
+            if target.count() == 0:
                 continue
 
-            checkbox.click(force=True, timeout=3000)
+            target.click(force=True, timeout=3000)
             page.wait_for_timeout(MEDIUM_WAIT_MS)
 
-            if detection_checkbox_is_checked(page):
+            if header_checkbox_is_selected(page):
                 log(f"Confirmed filtered detection checkbox selected for {lookup}")
                 return True
         except Exception:
@@ -571,6 +569,45 @@ def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
 
     write_debug_html(page, "so_debug_filtered_checkbox_failure.html")
     print_page_debug(page, f"filtered checkbox selection failure for {lookup}")
+    return False
+
+
+def header_checkbox_is_selected(page: Page) -> bool:
+    containers = [
+        page.locator('[data-aid="events_checkbox_detections"]').first,
+        page.locator('.v-data-table--show-select th').first,
+    ]
+
+    for container in containers:
+        try:
+            if container.count() == 0:
+                continue
+
+            candidates = [
+                container.locator('[role="checkbox"]').first,
+                container.locator('.v-selection-control__input').first,
+                container.locator('input#multiselect-checkbox').first,
+            ]
+
+            for candidate in candidates:
+                try:
+                    if candidate.count() == 0:
+                        continue
+
+                    aria_checked = candidate.get_attribute("aria-checked")
+                    if aria_checked and aria_checked.strip().lower() == "mixed":
+                        return True
+
+                    parent = candidate.locator("xpath=ancestor::*[1]")
+                    if parent.count() > 0:
+                        parent_aria = parent.get_attribute("aria-checked")
+                        if parent_aria and parent_aria.strip().lower() == "mixed":
+                            return True
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     return False
 
 
