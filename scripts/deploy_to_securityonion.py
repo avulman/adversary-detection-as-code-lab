@@ -476,14 +476,36 @@ def verify_suricata_rule_present_in_ui(page: Page, rule: dict):
 
 def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
     temp_page = open_detections_in_fresh_tab(context)
+
     try:
+        # Force filter navigation
+        search_for_rule(temp_page, rule.get("msg") or rule["name"])
+
+        # HARD REFRESH (important for Vue + Elastic reload)
+        temp_page.reload(wait_until="networkidle")
+        temp_page.wait_for_timeout(LONG_WAIT_MS)
+
+        # Wait for "Total Found" to stabilize
+        try:
+            temp_page.get_by_text(re.compile(r"Total Found:", re.I)).wait_for(timeout=10000)
+        except Exception:
+            pass
+
+        # EXTRA wait to ensure backend finished
+        temp_page.wait_for_timeout(3000)
+
         still_present = find_rule_in_ui(temp_page, rule)
+
         if not still_present:
             print(f"[PASS] Verified detection removal in UI for {rule['name']}")
             return
 
         write_debug_html(temp_page, "so_debug_verify_absent_failure.html")
-        print_page_debug(temp_page, f"verify absent failure for {rule.get('msg') or rule['name']}")
+        print_page_debug(
+            temp_page,
+            f"verify absent failure for {rule.get('msg') or rule['name']}"
+        )
+
     finally:
         temp_page.close()
 
