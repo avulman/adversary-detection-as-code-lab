@@ -255,7 +255,7 @@ def validate_single_security_onion_change():
         )
     )
 
-    if len(changes) > 2:
+    if len(changes) > 1:
         formatted = ", ".join(
             f"{item['engine']}:{item['action']}:{item['name']}" for item in changes
         )
@@ -264,7 +264,7 @@ def validate_single_security_onion_change():
             f"Detected {len(changes)} repo/state changes: {formatted}"
         )
 
-    if len(changes) == 2:
+    if len(changes) == 1:
         item = changes[0]
         log(
             "Validated single Security Onion repo/state change: "
