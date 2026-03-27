@@ -465,43 +465,119 @@ def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
 
 
 def choose_bulk_action_delete(page: Page):
-    bulk_selectors = [
-        'select',
-        '[data-aid*="bulk"] select',
-        '[data-aid*="action"] select',
-    ]
+    # First try to anchor to the "Bulk Action:" text and use the nearest select/combobox.
+    try:
+        bulk_label = page.get_by_text(re.compile(r"Bulk Action\s*:", re.I)).first
+        if bulk_label.count() > 0:
+            container_candidates = [
+                bulk_label.locator("xpath=ancestor::*[self::div or self::form or self::section][1]"),
+                bulk_label.locator("xpath=ancestor::*[self::div or self::form or self::section][2]"),
+            ]
 
-    for selector in bulk_selectors:
-        try:
-            dropdown = page.locator(selector).first
-            if dropdown.count() > 0 and dropdown.is_visible(timeout=2000):
-                options = dropdown.locator("option")
-                option_texts = []
-                for i in range(options.count()):
+            for container in container_candidates:
+                try:
+                    if container.count() == 0:
+                        continue
+
+                    # Native select in same region
+                    select_box = container.locator("select").first
+                    if select_box.count() > 0:
+                        option_count = select_box.locator("option").count()
+                        for i in range(option_count):
+                            try:
+                                option_text = select_box.locator("option").nth(i).inner_text().strip()
+                                if option_text.lower() == "delete":
+                                    select_box.select_option(label=option_text)
+                                    page.wait_for_timeout(MEDIUM_WAIT_MS)
+                                    return
+                            except Exception:
+                                pass
+
+                    # Vuetify / combobox style control in same region
+                    combo_candidates = [
+                        container.get_by_role("combobox").first,
+                        container.locator('[role="combobox"]').first,
+                        container.locator('input[aria-haspopup="listbox"]').first,
+                    ]
+
+                    for combo in combo_candidates:
+                        try:
+                            if combo.count() == 0:
+                                continue
+                            combo.click(force=True, timeout=3000)
+                            page.wait_for_timeout(SHORT_WAIT_MS)
+                            page.get_by_role("option", name=re.compile(r"^Delete$", re.I)).click(force=True, timeout=3000)
+                            page.wait_for_timeout(MEDIUM_WAIT_MS)
+                            return
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Next try to find a native select whose current value is Enable, then switch to Delete.
+    select_candidates = page.locator("select")
+    try:
+        select_count = select_candidates.count()
+        for i in range(select_count):
+            try:
+                select_box = select_candidates.nth(i)
+                option_locator = select_box.locator("option")
+                option_count = option_locator.count()
+                labels = []
+                for j in range(option_count):
                     try:
-                        option_texts.append(options.nth(i).inner_text().strip())
+                        labels.append(option_locator.nth(j).inner_text().strip())
                     except Exception:
                         pass
 
-                for option_text in option_texts:
-                    if option_text.lower() == "delete":
-                        dropdown.select_option(label=option_text)
-                        page.wait_for_timeout(MEDIUM_WAIT_MS)
-                        return
-        except Exception:
-            pass
-
-    # fallback for combobox-like controls
-    try:
-        combo = page.get_by_role("combobox").first
-        if combo.count() > 0:
-            combo.click(force=True, timeout=3000)
-            page.wait_for_timeout(SHORT_WAIT_MS)
-            page.get_by_role("option", name=re.compile(r"^Delete$", re.I)).click(force=True)
-            page.wait_for_timeout(MEDIUM_WAIT_MS)
-            return
+                lower_labels = {label.lower() for label in labels}
+                if "enable" in lower_labels and "delete" in lower_labels:
+                    for label in labels:
+                        if label.lower() == "delete":
+                            select_box.select_option(label=label)
+                            page.wait_for_timeout(MEDIUM_WAIT_MS)
+                            return
+            except Exception:
+                pass
     except Exception:
         pass
+
+    # Finally try generic comboboxes currently showing Enable.
+    combobox_candidates = [
+        page.get_by_role("combobox"),
+        page.locator('[role="combobox"]'),
+        page.locator('input[aria-haspopup="listbox"]'),
+    ]
+
+    for candidate_group in combobox_candidates:
+        try:
+            count = candidate_group.count()
+            for i in range(count):
+                try:
+                    combo = candidate_group.nth(i)
+                    text_value = ""
+                    try:
+                        text_value = combo.inner_text().strip()
+                    except Exception:
+                        try:
+                            text_value = combo.input_value().strip()
+                        except Exception:
+                            pass
+
+                    if text_value and text_value.lower() != "enable":
+                        continue
+
+                    combo.click(force=True, timeout=3000)
+                    page.wait_for_timeout(SHORT_WAIT_MS)
+                    page.get_by_role("option", name=re.compile(r"^Delete$", re.I)).click(force=True, timeout=3000)
+                    page.wait_for_timeout(MEDIUM_WAIT_MS)
+                    return
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     write_debug_html(page, "so_debug_bulk_action_failure.html")
     fail("Could not set Bulk Action to Delete")
@@ -521,7 +597,6 @@ def click_go_button(page: Page):
         except Exception:
             pass
 
-    # fallback generic text/button attempts
     try:
         page.locator('button:has-text("GO")').first.click(force=True, timeout=3000)
         page.wait_for_timeout(LONG_WAIT_MS)
