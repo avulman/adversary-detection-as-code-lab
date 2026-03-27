@@ -586,7 +586,7 @@ def select_effective_single_change(repo_state_changes: list[dict], ui_drift_chan
     if total == 0:
         return None
 
-    if total > 5:
+    if total > 1:
         combined = repo_state_changes + ui_drift_changes
         formatted = ", ".join(
             f"{item['source']}:{item['engine']}:{item['action']}:{item['name']}"
