@@ -424,26 +424,131 @@ def verify_suricata_rule_absent_in_ui(page: Page, rule: dict):
     print(f"[PASS] Verified detection removal in UI for {rule['name']}")
 
 
+def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
+    lookup = rule.get("msg") or rule["name"]
+    search_for_rule(page, lookup)
+
+    row_locator_candidates = []
+
+    if rule.get("msg"):
+        row_locator_candidates.append(page.get_by_text(rule["msg"], exact=False).first)
+    row_locator_candidates.append(page.get_by_text(rule["name"], exact=False).first)
+
+    for candidate in row_locator_candidates:
+        try:
+            if candidate.count() == 0:
+                continue
+
+            row = candidate.locator("xpath=ancestor::tr[1]")
+            if row.count() == 0:
+                continue
+
+            checkbox_selectors = [
+                'input[type="checkbox"]',
+                '[role="checkbox"]',
+                'label:has(input[type="checkbox"])',
+            ]
+
+            for selector in checkbox_selectors:
+                try:
+                    checkbox = row.locator(selector).first
+                    if checkbox.count() > 0:
+                        checkbox.click(force=True, timeout=3000)
+                        page.wait_for_timeout(MEDIUM_WAIT_MS)
+                        return True
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    return False
+
+
+def choose_bulk_action_delete(page: Page):
+    bulk_selectors = [
+        'select',
+        '[data-aid*="bulk"] select',
+        '[data-aid*="action"] select',
+    ]
+
+    for selector in bulk_selectors:
+        try:
+            dropdown = page.locator(selector).first
+            if dropdown.count() > 0 and dropdown.is_visible(timeout=2000):
+                options = dropdown.locator("option")
+                option_texts = []
+                for i in range(options.count()):
+                    try:
+                        option_texts.append(options.nth(i).inner_text().strip())
+                    except Exception:
+                        pass
+
+                for option_text in option_texts:
+                    if option_text.lower() == "delete":
+                        dropdown.select_option(label=option_text)
+                        page.wait_for_timeout(MEDIUM_WAIT_MS)
+                        return
+        except Exception:
+            pass
+
+    # fallback for combobox-like controls
+    try:
+        combo = page.get_by_role("combobox").first
+        if combo.count() > 0:
+            combo.click(force=True, timeout=3000)
+            page.wait_for_timeout(SHORT_WAIT_MS)
+            page.get_by_role("option", name=re.compile(r"^Delete$", re.I)).click(force=True)
+            page.wait_for_timeout(MEDIUM_WAIT_MS)
+            return
+    except Exception:
+        pass
+
+    write_debug_html(page, "so_debug_bulk_action_failure.html")
+    fail("Could not set Bulk Action to Delete")
+
+
+def click_go_button(page: Page):
+    go_patterns = [r"^GO$", r"^Go$"]
+
+    for pattern in go_patterns:
+        try:
+            page.get_by_role("button", name=re.compile(pattern)).first.click(
+                force=True,
+                timeout=3000,
+            )
+            page.wait_for_timeout(LONG_WAIT_MS)
+            return
+        except Exception:
+            pass
+
+    # fallback generic text/button attempts
+    try:
+        page.locator('button:has-text("GO")').first.click(force=True, timeout=3000)
+        page.wait_for_timeout(LONG_WAIT_MS)
+        return
+    except Exception:
+        pass
+
+    try:
+        page.locator('text=GO').first.click(force=True, timeout=3000)
+        page.wait_for_timeout(LONG_WAIT_MS)
+        return
+    except Exception:
+        pass
+
+    write_debug_html(page, "so_debug_go_button_failure.html")
+    fail("Could not click GO button for bulk action")
+
+
 def delete_suricata_rule_in_ui(page: Page, rule: dict):
     log(f"Deleting detection in UI for {rule['name']}")
 
-    if not open_rule_in_ui(page, rule):
+    if not select_rule_checkbox_in_list(page, rule):
         log(f"Rule not found in UI for deletion; continuing: {rule['name']}")
         return
 
-    click_first_matching_button(page, [r"Delete"], "Could not click Delete button")
-
-    try:
-        click_first_matching_button(
-            page,
-            [r"Delete", r"Confirm"],
-            "Could not confirm deletion",
-        )
-    except SystemExit:
-        pass
-
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(LONG_WAIT_MS)
+    choose_bulk_action_delete(page)
+    click_go_button(page)
     go_to_detections(page)
     print(f"[PASS] Deleted detection in UI for {rule['name']}")
 
