@@ -492,6 +492,7 @@ def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
 
 def row_checkbox_is_checked(row: Locator) -> bool:
     checkbox_candidates = [
+        row.locator('input#multiselect-checkbox'),
         row.locator('input[type="checkbox"]'),
         row.locator('[role="checkbox"]'),
     ]
@@ -501,22 +502,38 @@ def row_checkbox_is_checked(row: Locator) -> bool:
             count = group.count()
             for i in range(count):
                 candidate = group.nth(i)
+
+                # Security Onion/Vuetify case from your inspector:
+                # checked row has value="true"
                 try:
-                    checked = candidate.is_checked()
-                    return checked
+                    value_attr = candidate.get_attribute("value")
+                    if value_attr is not None and value_attr.strip().lower() == "true":
+                        return True
                 except Exception:
-                    try:
-                        aria_checked = candidate.get_attribute("aria-checked")
-                        if aria_checked is not None:
-                            return aria_checked.lower() == "true"
-                    except Exception:
-                        pass
-                    try:
-                        cls = candidate.get_attribute("class") or ""
-                        if "fa-square-check" in cls or "mdi-checkbox-marked" in cls:
-                            return True
-                    except Exception:
-                        pass
+                    pass
+
+                # Standard checkbox fallback
+                try:
+                    if candidate.is_checked():
+                        return True
+                except Exception:
+                    pass
+
+                # ARIA fallback
+                try:
+                    aria_checked = candidate.get_attribute("aria-checked")
+                    if aria_checked is not None and aria_checked.strip().lower() == "true":
+                        return True
+                except Exception:
+                    pass
+
+                # Class/icon fallback
+                try:
+                    cls = candidate.get_attribute("class") or ""
+                    if "fa-square-check" in cls or "mdi-checkbox-marked" in cls:
+                        return True
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -529,10 +546,11 @@ def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
         return False
 
     click_targets = [
+        row.locator('input#multiselect-checkbox').first,
         row.locator('input[type="checkbox"]').first,
-        row.locator('[role="checkbox"]').first,
         row.locator('.v-selection-control__input').first,
         row.locator('.v-checkbox-btn').first,
+        row.locator('[role="checkbox"]').first,
     ]
 
     for target in click_targets:
