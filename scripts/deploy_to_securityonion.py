@@ -427,13 +427,28 @@ def create_suricata_rule_in_ui(page: Page, rule: dict):
     log(f"Creating detection in UI for {rule['name']}")
     open_create_detection_dialog(page)
     fill_suricata_detection_form(page, rule)
-    click_first_matching_button(page, [r"Create"], "Could not click Create button")
-    page.wait_for_load_state("networkidle")
+    click_first_matching_button(page, [r"^Create$"], "Could not click Create button")
+
+    # Give the UI time to process submission
     page.wait_for_timeout(LONG_WAIT_MS)
-    print(f"[PASS] Created detection in UI for {rule['name']}")
+
+    # If still on the create screen, navigate back to detections explicitly
+    try:
+        if "#/detection/create" in page.url:
+            log("Still on create page after clicking CREATE; navigating to detections explicitly")
+    except Exception:
+        pass
+
+    go_to_detections(page)
+    page.wait_for_timeout(LONG_WAIT_MS)
+    print(f"[PASS] Submitted create flow for {rule['name']}")
 
 
 def verify_suricata_rule_present_in_ui(page: Page, rule: dict):
+    search_for_rule(page, rule.get("msg") or rule["name"])
+    page.reload(wait_until="networkidle")
+    page.wait_for_timeout(LONG_WAIT_MS)
+
     if not find_rule_in_ui(page, rule):
         write_debug_html(page, "so_debug_verify_present_failure.html")
         print_page_debug(page, f"verify present failure for {rule.get('msg') or rule['name']}")
