@@ -1,35 +1,27 @@
 from pathlib import Path
+import json
 import os
 import re
 import sys
-import time
-import json
-import tempfile
-import paramiko
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
-SO_SURICATA_DIR = ROOT / "detections" / "security-onion" / "suricata"
-STATE_DIR = ROOT / "state"
-STATE_FILE = STATE_DIR / "securityonion_rule_state.json"
 
-SO_MANAGER_HOST = os.getenv("SO_MANAGER_HOST", "").strip()
-SO_MANAGER_PORT = int(os.getenv("SO_MANAGER_PORT", "22"))
-SO_MANAGER_USER = os.getenv("SO_MANAGER_USER", "").strip()
-SO_MANAGER_SSH_KEY = os.getenv("SO_MANAGER_SSH_KEY", "")
+SO_BASE_DIR = ROOT / "detections" / "security-onion"
+SO_SURICATA_DIR = SO_BASE_DIR / "suricata"
+SO_ZEEK_DIR = SO_BASE_DIR / "zeek"
+
+STATE_FILE = ROOT / "state" / "securityonion_rule_state.json"
 
 SO_UI_URL = os.getenv("SO_UI_URL", "").strip().rstrip("/")
 SO_UI_USERNAME = os.getenv("SO_UI_USERNAME", "").strip()
 SO_UI_PASSWORD = os.getenv("SO_UI_PASSWORD", "").strip()
 
-# Managed SID range for auto-assignment
-AUTO_SID_START = 1000000
-AUTO_SID_END = 1000999
-
-# UI pacing
 SHORT_WAIT_MS = 1500
 MEDIUM_WAIT_MS = 3000
 LONG_WAIT_MS = 5000
+
+ALLOWED_STATE_ENGINES = {"suricata", "zeek"}
 
 
 def fail(msg: str):
@@ -47,97 +39,8 @@ def write_debug_html(page, filename: str = "so_debug_page.html"):
     print(f"[INFO] Wrote debug HTML to {debug_path}")
 
 
-def ensure_state_dir():
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def load_state() -> dict:
-    ensure_state_dir()
-    if not STATE_FILE.exists():
-        return {"managed_rules": {}}
-    try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {"managed_rules": {}}
-
-
-def save_state(state: dict):
-    ensure_state_dir()
-    STATE_FILE.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
-
-
-def write_temp_key() -> str:
-    if not SO_MANAGER_SSH_KEY:
-        fail("SO_MANAGER_SSH_KEY environment variable is not set")
-
-    with tempfile.NamedTemporaryFile(delete=False, mode="w", encoding="utf-8", newline="\n") as f:
-        f.write(SO_MANAGER_SSH_KEY)
-        key_path = f.name
-
-    os.chmod(key_path, 0o600)
-    return key_path
-
-
-def get_private_key(key_path: str):
-    key_loaders = [
-        paramiko.Ed25519Key.from_private_key_file,
-        paramiko.RSAKey.from_private_key_file,
-        paramiko.ECDSAKey.from_private_key_file,
-    ]
-    last_error = None
-    for loader in key_loaders:
-        try:
-            return loader(key_path)
-        except Exception as e:
-            last_error = e
-    fail(f"Unable to load SSH private key: {last_error}")
-
-
-def get_ssh_client(key_path: str) -> paramiko.SSHClient:
-    if not SO_MANAGER_HOST or not SO_MANAGER_USER:
-        fail("Missing SO_MANAGER_HOST or SO_MANAGER_USER")
-
-    key = get_private_key(key_path)
-
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        hostname=SO_MANAGER_HOST,
-        port=SO_MANAGER_PORT,
-        username=SO_MANAGER_USER,
-        pkey=key,
-        timeout=20,
-        look_for_keys=False,
-        allow_agent=False,
-    )
-    return client
-
-
-def exec_ssh(client: paramiko.SSHClient, command: str):
-    stdin, stdout, stderr = client.exec_command(command)
-    exit_status = stdout.channel.recv_exit_status()
-    out = stdout.read().decode("utf-8", errors="ignore")
-    err = stderr.read().decode("utf-8", errors="ignore")
-    return exit_status, out, err
-
-
-def grep_all_rulesets_for_sid(client: paramiko.SSHClient, sid: str) -> bool:
-    command = f"grep -F 'sid:{sid}' /opt/so/rules/suricata/all-rulesets.rules >/dev/null 2>&1"
-    code, _, _ = exec_ssh(client, command)
-    return code == 0
-
-
-def rule_exists_in_all_rulesets(client: paramiko.SSHClient, rule: dict) -> bool:
-    if rule["sid"]:
-        if grep_all_rulesets_for_sid(client, rule["sid"]):
-            return True
-    command = f"grep -F '{rule['msg']}' /opt/so/rules/suricata/all-rulesets.rules >/dev/null 2>&1"
-    code, _, _ = exec_ssh(client, command)
-    return code == 0
-
-
-def normalize_signature(signature: str) -> str:
-    return " ".join(signature.split())
+def normalize_rule_content(content: str) -> str:
+    return " ".join(content.split())
 
 
 def extract_msg(content: str, fallback: str) -> str:
@@ -150,92 +53,158 @@ def extract_sid(content: str):
     return match.group(1) if match else None
 
 
-def replace_or_insert_sid(content: str, sid: str) -> str:
-    if re.search(r"sid:\d+", content):
-        return re.sub(r"sid:\d+", f"sid:{sid}", content)
-    return re.sub(r"\)\s*$", f"; sid:{sid};)", content)
+def ensure_state_file_exists():
+    if not STATE_FILE.exists():
+        fail(
+            "Missing required state file: state/securityonion_rule_state.json. "
+            "Create it before running deployment."
+        )
+
+    if not STATE_FILE.is_file():
+        fail(
+            "state/securityonion_rule_state.json exists but is not a file. "
+            "It must be a JSON file, not a directory."
+        )
 
 
-def parse_rule_file(path: Path, assigned_sid: str | None = None):
-    raw = path.read_text(encoding="utf-8", errors="ignore").strip()
-    if not raw:
-        fail(f"{path.name} is empty")
+def load_state() -> dict:
+    ensure_state_file_exists()
 
-    one_line = normalize_signature(raw)
-    sid = extract_sid(one_line)
+    try:
+        raw = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        fail(f"State file is not valid JSON: {e}")
+    except Exception as e:
+        fail(f"Unable to read state file: {e}")
 
-    if not sid and assigned_sid:
-        one_line = replace_or_insert_sid(one_line, assigned_sid)
-        sid = assigned_sid
+    if not isinstance(raw, dict):
+        fail("State file must contain a top-level JSON object")
 
-    msg = extract_msg(one_line, path.stem)
+    for engine in ALLOWED_STATE_ENGINES:
+        raw.setdefault(engine, {})
 
+    extra_keys = set(raw.keys()) - ALLOWED_STATE_ENGINES
+    if extra_keys:
+        fail(
+            "State file contains unsupported top-level keys: "
+            + ", ".join(sorted(extra_keys))
+        )
+
+    for engine, entries in raw.items():
+        if not isinstance(entries, dict):
+            fail(f"State section '{engine}' must be an object")
+        for name, content in entries.items():
+            if not isinstance(name, str) or not name.strip():
+                fail(f"Invalid rule name found in state section '{engine}'")
+            if not isinstance(content, str) or not content.strip():
+                fail(
+                    f"State entry '{engine}:{name}' must contain a non-empty rule string"
+                )
+
+    return raw
+
+
+def save_state(state: dict):
+    STATE_FILE.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def parse_suricata_rule(name: str, content: str) -> dict:
+    normalized = normalize_rule_content(content)
     return {
-        "path": path,
-        "content": one_line,
-        "msg": msg,
-        "sid": sid,
+        "engine": "suricata",
+        "name": name,
+        "content": normalized,
+        "msg": extract_msg(normalized, Path(name).stem),
+        "sid": extract_sid(normalized),
     }
 
 
-def collect_repo_rules() -> list[dict]:
-    state = load_state()
-    managed_state = state.get("managed_rules", {})
+def collect_repo_state() -> dict:
+    repo_state = {
+        "suricata": {},
+        "zeek": {},
+    }
 
-    rule_files = sorted(SO_SURICATA_DIR.glob("*.rules"))
-    if not rule_files:
-        fail("No .rules files found in detections/security-onion/suricata")
+    if SO_SURICATA_DIR.exists():
+        if not SO_SURICATA_DIR.is_dir():
+            fail("detections/security-onion/suricata must be a directory")
+        for path in sorted(SO_SURICATA_DIR.glob("*.rules")):
+            content = path.read_text(encoding="utf-8", errors="ignore").strip()
+            if not content:
+                fail(f"{path.relative_to(ROOT)} is empty")
+            repo_state["suricata"][path.name] = normalize_rule_content(content)
 
-    used_sids = set()
-    for value in managed_state.values():
-        sid = value.get("sid")
-        if sid:
-            used_sids.add(str(sid))
+    if SO_ZEEK_DIR.exists():
+        if not SO_ZEEK_DIR.is_dir():
+            fail("detections/security-onion/zeek must be a directory")
+        for path in sorted(p for p in SO_ZEEK_DIR.rglob("*") if p.is_file()):
+            content = path.read_text(encoding="utf-8", errors="ignore").strip()
+            if not content:
+                fail(f"{path.relative_to(ROOT)} is empty")
+            relative_name = path.relative_to(SO_ZEEK_DIR).as_posix()
+            repo_state["zeek"][relative_name] = normalize_rule_content(content)
 
-    parsed_rules = []
+    return repo_state
 
-    for path in rule_files:
-        existing_sid = None
-        if path.name in managed_state:
-            existing_sid = managed_state[path.name].get("sid")
 
-        rule = parse_rule_file(path, assigned_sid=existing_sid)
-        if rule["sid"]:
-            used_sids.add(str(rule["sid"]))
-        parsed_rules.append(rule)
+def build_change_plan(repo_state: dict, saved_state: dict) -> list[dict]:
+    changes = []
 
-    # Assign SIDs for any rule still missing one
-    next_sid = AUTO_SID_START
-    for rule in parsed_rules:
-        if rule["sid"]:
-            continue
+    for engine in sorted(ALLOWED_STATE_ENGINES):
+        repo_rules = repo_state.get(engine, {})
+        state_rules = saved_state.get(engine, {})
 
-        while str(next_sid) in used_sids and next_sid <= AUTO_SID_END:
-            next_sid += 1
+        repo_names = set(repo_rules.keys())
+        state_names = set(state_rules.keys())
 
-        if next_sid > AUTO_SID_END:
-            fail("Exhausted managed SID range for auto-assignment")
+        for name in sorted(repo_names - state_names):
+            changes.append(
+                {
+                    "engine": engine,
+                    "action": "create",
+                    "name": name,
+                    "new_content": repo_rules[name],
+                    "old_content": None,
+                }
+            )
 
-        assigned = str(next_sid)
-        rule["content"] = replace_or_insert_sid(rule["content"], assigned)
-        rule["sid"] = assigned
-        used_sids.add(assigned)
-        next_sid += 1
+        for name in sorted(state_names - repo_names):
+            changes.append(
+                {
+                    "engine": engine,
+                    "action": "delete",
+                    "name": name,
+                    "new_content": None,
+                    "old_content": state_rules[name],
+                }
+            )
 
-        log(f"Auto-assigned sid:{assigned} to {rule['path'].name}")
+        for name in sorted(repo_names & state_names):
+            repo_content = normalize_rule_content(repo_rules[name])
+            state_content = normalize_rule_content(state_rules[name])
+            if repo_content != state_content:
+                changes.append(
+                    {
+                        "engine": engine,
+                        "action": "update",
+                        "name": name,
+                        "new_content": repo_content,
+                        "old_content": state_content,
+                    }
+                )
 
-    # Persist auto-assigned SIDs back into the rule files and state
-    for rule in parsed_rules:
-        rule["path"].write_text(rule["content"] + "\n", encoding="utf-8")
-        managed_state[rule["path"].name] = {
-            "sid": rule["sid"],
-            "msg": rule["msg"],
-        }
+    return changes
 
-    state["managed_rules"] = managed_state
-    save_state(state)
 
-    return parsed_rules
+def assert_single_change(changes: list[dict]):
+    if len(changes) > 1:
+        formatted = ", ".join(
+            f"{item['engine']}:{item['action']}:{item['name']}" for item in changes
+        )
+        fail(
+            "Only one Security Onion rule change is allowed per push. "
+            f"Detected {len(changes)} changes: {formatted}"
+        )
 
 
 def ui_login(page):
@@ -260,7 +229,6 @@ def ui_login(page):
 
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(LONG_WAIT_MS)
-
     print("[PASS] Logged into Security Onion UI")
 
 
@@ -269,30 +237,15 @@ def go_to_detections(page):
     page.wait_for_timeout(LONG_WAIT_MS)
 
 
-def clear_search_box(page):
-    search_selectors = [
-        'input[placeholder*="search" i]',
-        '[data-aid*="search"] input',
-        'input[type="text"]',
-    ]
-    for selector in search_selectors:
-        try:
-            box = page.locator(selector).first
-            if box.count() > 0:
-                box.fill("")
-                page.wait_for_timeout(SHORT_WAIT_MS)
-                return
-        except Exception:
-            pass
-
-
 def search_for_rule(page, text: str):
     go_to_detections(page)
+
     search_selectors = [
         'input[placeholder*="search" i]',
         '[data-aid*="search"] input',
         'input[type="text"]',
     ]
+
     for selector in search_selectors:
         try:
             box = page.locator(selector).first
@@ -305,18 +258,27 @@ def search_for_rule(page, text: str):
         except Exception:
             pass
 
+    write_debug_html(page)
+    fail("Could not find the detections search box")
+
+
+def rule_candidates(page, rule: dict):
+    candidates = []
+    if rule.get("sid"):
+        candidates.append(page.get_by_text(rule["sid"], exact=False))
+    if rule.get("msg"):
+        candidates.append(page.get_by_text(rule["msg"], exact=False))
+    candidates.append(page.get_by_text(rule["name"], exact=False))
+    return candidates
+
 
 def find_rule_in_ui(page, rule: dict) -> bool:
-    search_for_rule(page, rule["sid"] or rule["msg"])
+    lookup = rule.get("sid") or rule.get("msg") or rule["name"]
+    search_for_rule(page, lookup)
 
-    candidates = []
-    if rule["sid"]:
-        candidates.append(page.get_by_text(rule["sid"], exact=False))
-    candidates.append(page.get_by_text(rule["msg"], exact=False))
-
-    for c in candidates:
+    for candidate in rule_candidates(page, rule):
         try:
-            if c.count() > 0:
+            if candidate.count() > 0:
                 return True
         except Exception:
             pass
@@ -325,16 +287,12 @@ def find_rule_in_ui(page, rule: dict) -> bool:
 
 
 def open_rule_in_ui(page, rule: dict) -> bool:
-    search_for_rule(page, rule["sid"] or rule["msg"])
+    lookup = rule.get("sid") or rule.get("msg") or rule["name"]
+    search_for_rule(page, lookup)
 
-    candidates = []
-    if rule["sid"]:
-        candidates.append(page.get_by_text(rule["sid"], exact=False))
-    candidates.append(page.get_by_text(rule["msg"], exact=False))
-
-    for c in candidates:
+    for candidate in rule_candidates(page, rule):
         try:
-            c.first.click(force=True, timeout=3000)
+            candidate.first.click(force=True, timeout=3000)
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(LONG_WAIT_MS)
             return True
@@ -368,10 +326,10 @@ def open_create_detection_dialog(page):
             pass
 
     write_debug_html(page)
-    fail("Could not find/click the create (+) button on the Detections page")
+    fail("Could not find/click the create button on the Detections page")
 
 
-def fill_detection_form(page, rule: dict):
+def fill_suricata_detection_form(page, rule: dict):
     language_selectors = [
         '#detection-language-create',
         '#detection-language-edit',
@@ -438,7 +396,10 @@ def fill_detection_form(page, rule: dict):
 def click_first_matching_button(page, patterns: list[str], failure_message: str):
     for pattern in patterns:
         try:
-            page.get_by_role("button", name=re.compile(pattern, re.I)).first.click(force=True, timeout=3000)
+            page.get_by_role("button", name=re.compile(pattern, re.I)).first.click(
+                force=True,
+                timeout=3000,
+            )
             page.wait_for_timeout(MEDIUM_WAIT_MS)
             return
         except Exception:
@@ -446,17 +407,6 @@ def click_first_matching_button(page, patterns: list[str], failure_message: str)
 
     write_debug_html(page)
     fail(failure_message)
-
-
-def create_rule_in_ui(page, rule: dict):
-    log(f"Creating detection in UI for {rule['path'].name}")
-    open_create_detection_dialog(page)
-    fill_detection_form(page, rule)
-    click_first_matching_button(page, [r"Create"], "Could not click Create button")
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(LONG_WAIT_MS)
-    go_to_detections(page)
-    print(f"[PASS] Created detection in UI for {rule['path'].name}")
 
 
 def get_current_signature(page) -> str:
@@ -470,69 +420,67 @@ def get_current_signature(page) -> str:
         try:
             locator = page.locator(selector).first
             if locator.count() > 0:
-                value = locator.input_value()
-                return normalize_signature(value)
+                return normalize_rule_content(locator.input_value())
         except Exception:
             pass
     return ""
 
 
-def update_rule_in_ui(page, rule: dict):
-    log(f"Updating detection in UI for {rule['path'].name}")
-
-    if not open_rule_in_ui(page, rule):
-        fail(f"Rule exists in UI but could not be opened for update: {rule['msg']}")
-
-    current_signature = get_current_signature(page)
-    desired_signature = normalize_signature(rule["content"])
-
-    if current_signature == desired_signature:
-        log(f"No update required for {rule['path'].name}")
-        go_to_detections(page)
-        return
-
-    edit_patterns = [r"Edit"]
-    edited = False
-    for pattern in edit_patterns:
-        try:
-            page.get_by_role("button", name=re.compile(pattern, re.I)).first.click(force=True, timeout=3000)
-            page.wait_for_timeout(MEDIUM_WAIT_MS)
-            edited = True
-            break
-        except Exception:
-            pass
-
-    if not edited:
-        log(f"Edit button not found for {rule['path'].name}; attempting direct field update")
-
-    fill_detection_form(page, rule)
-    click_first_matching_button(page, [r"Save", r"Update", r"Submit"], "Could not save updated rule")
+def create_suricata_rule_in_ui(page, rule: dict):
+    log(f"Creating detection in UI for {rule['name']}")
+    open_create_detection_dialog(page)
+    fill_suricata_detection_form(page, rule)
+    click_first_matching_button(page, [r"Create"], "Could not click Create button")
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(LONG_WAIT_MS)
+    print(f"[PASS] Created detection in UI for {rule['name']}")
+
+
+def verify_suricata_rule_matches_ui(page, rule: dict):
+    if not open_rule_in_ui(page, rule):
+        fail(f"Rule was not found in UI after deployment: {rule['name']}")
+
+    current_signature = get_current_signature(page)
+    desired_signature = normalize_rule_content(rule["content"])
+
+    if current_signature != desired_signature:
+        fail(
+            f"UI signature mismatch for {rule['name']}. "
+            "The detection exists, but the stored signature does not match the repo."
+        )
+
     go_to_detections(page)
-    print(f"[PASS] Updated detection in UI for {rule['path'].name}")
+    print(f"[PASS] Verified detection content in UI for {rule['name']}")
 
 
-def delete_rule_in_ui(page, sid: str, msg: str):
-    log(f"Deleting detection in UI for sid:{sid} ({msg})")
+def verify_suricata_rule_absent_in_ui(page, rule: dict):
+    if find_rule_in_ui(page, rule):
+        fail(f"Rule still appears in UI after deletion: {rule['name']}")
+    print(f"[PASS] Verified detection removal in UI for {rule['name']}")
 
-    pseudo_rule = {"sid": sid, "msg": msg}
-    if not open_rule_in_ui(page, pseudo_rule):
-        log(f"Rule sid:{sid} not found in UI for deletion; skipping")
+
+def delete_suricata_rule_in_ui(page, rule: dict):
+    log(f"Deleting detection in UI for {rule['name']}")
+
+    if not open_rule_in_ui(page, rule):
+        log(f"Rule not found in UI for deletion; continuing: {rule['name']}")
         return
 
     click_first_matching_button(page, [r"Delete"], "Could not click Delete button")
 
-    # confirm if dialog exists
     try:
-        click_first_matching_button(page, [r"Delete", r"Confirm"], "Could not confirm deletion")
+        click_first_matching_button(
+            page,
+            [r"Delete", r"Confirm"],
+            "Could not confirm deletion",
+        )
     except SystemExit:
         pass
 
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(LONG_WAIT_MS)
     go_to_detections(page)
-    print(f"[PASS] Deleted detection in UI for sid:{sid}")
+    print(f"[PASS] Deleted detection in UI for {rule['name']}")
 
 
 def differential_update_suricata(page):
@@ -556,7 +504,7 @@ def differential_update_suricata(page):
 
     if not opened:
         write_debug_html(page)
-        fail("Could not click Options on the detections LIST page")
+        fail("Could not click Options on the detections list page")
 
     page.wait_for_timeout(SHORT_WAIT_MS)
 
@@ -570,97 +518,86 @@ def differential_update_suricata(page):
     print("[PASS] Ran Suricata Differential Update")
 
 
-def reconcile_state_with_repo(repo_rules: list[dict]) -> tuple[list[dict], list[dict]]:
-    state = load_state()
-    managed_state = state.get("managed_rules", {})
+def apply_single_change(page, change: dict, saved_state: dict, repo_state: dict):
+    if change["engine"] == "zeek":
+        fail(
+            "Zeek state tracking is supported, but Zeek UI deployment logic has not "
+            "been implemented yet. This push contains a Zeek rule change."
+        )
 
-    repo_by_file = {r["path"].name: r for r in repo_rules}
-    repo_sids = {r["sid"] for r in repo_rules}
+    if change["engine"] != "suricata":
+        fail(f"Unsupported detection engine: {change['engine']}")
 
-    delete_candidates = []
-    for filename, data in managed_state.items():
-        sid = str(data.get("sid", "")).strip()
-        msg = data.get("msg", filename)
-        if sid and sid not in repo_sids:
-            delete_candidates.append({"filename": filename, "sid": sid, "msg": msg})
+    old_rule = None
+    if change["old_content"]:
+        old_rule = parse_suricata_rule(change["name"], change["old_content"])
 
-    return repo_rules, delete_candidates
+    new_rule = None
+    if change["new_content"]:
+        new_rule = parse_suricata_rule(change["name"], change["new_content"])
+
+    if change["action"] == "create":
+        create_suricata_rule_in_ui(page, new_rule)
+        differential_update_suricata(page)
+        verify_suricata_rule_matches_ui(page, new_rule)
+        saved_state["suricata"][change["name"]] = new_rule["content"]
+        save_state(saved_state)
+        return
+
+    if change["action"] == "delete":
+        delete_suricata_rule_in_ui(page, old_rule)
+        differential_update_suricata(page)
+        verify_suricata_rule_absent_in_ui(page, old_rule)
+        saved_state["suricata"].pop(change["name"], None)
+        save_state(saved_state)
+        return
+
+    if change["action"] == "update":
+        delete_suricata_rule_in_ui(page, old_rule)
+        differential_update_suricata(page)
+        verify_suricata_rule_absent_in_ui(page, old_rule)
+
+        create_suricata_rule_in_ui(page, new_rule)
+        differential_update_suricata(page)
+        verify_suricata_rule_matches_ui(page, new_rule)
+
+        saved_state["suricata"][change["name"]] = new_rule["content"]
+        save_state(saved_state)
+        return
+
+    fail(f"Unsupported change action: {change['action']}")
 
 
 def main():
     if not SO_UI_URL or not SO_UI_USERNAME or not SO_UI_PASSWORD:
         fail("Missing SO_UI_URL, SO_UI_USERNAME, or SO_UI_PASSWORD")
 
-    repo_rules = collect_repo_rules()
-    repo_rules, delete_candidates = reconcile_state_with_repo(repo_rules)
+    saved_state = load_state()
+    repo_state = collect_repo_state()
+    changes = build_change_plan(repo_state, saved_state)
 
-    key_path = write_temp_key()
-    client = None
+    assert_single_change(changes)
 
-    try:
-        client = get_ssh_client(key_path)
+    if not changes:
+        print("[PASS] No Security Onion changes detected against state file")
+        return
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page(ignore_https_errors=True)
+    change = changes[0]
+    log(
+        f"Processing single Security Onion change: "
+        f"{change['engine']}:{change['action']}:{change['name']}"
+    )
 
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(ignore_https_errors=True)
+
+        try:
             ui_login(page)
-
-            processed_rules = []
-
-            # delete rules removed from repo
-            for item in delete_candidates:
-                delete_rule_in_ui(page, item["sid"], item["msg"])
-
-            # create or update all repo rules
-            for rule in repo_rules:
-                exists_backend = rule_exists_in_all_rulesets(client, rule)
-                log(f"{rule['path'].name} exists in all-rulesets.rules: {exists_backend}")
-
-                exists_ui = find_rule_in_ui(page, rule)
-                log(f"{rule['path'].name} exists in UI: {exists_ui}")
-
-                if exists_ui:
-                    update_rule_in_ui(page, rule)
-                else:
-                    create_rule_in_ui(page, rule)
-
-                processed_rules.append(rule)
-
-            # single differential update after all changes
-            log("Running Suricata Differential Update in UI")
-            differential_update_suricata(page)
+            apply_single_change(page, change, saved_state, repo_state)
+            print("[PASS] Security Onion deployment completed successfully")
+        finally:
             browser.close()
-
-        time.sleep(10)
-
-        # verify activation
-        for rule in processed_rules:
-            exists = rule_exists_in_all_rulesets(client, rule)
-            log(f"Post-update check for {rule['path'].name}: {exists}")
-            if not exists:
-                fail(
-                    f"{rule['path'].name} with sid:{rule['sid']} still not present in "
-                    "/opt/so/rules/suricata/all-rulesets.rules after UI update"
-                )
-
-        # clean deleted rules from state
-        state = load_state()
-        managed_state = state.get("managed_rules", {})
-        repo_filenames = {r["path"].name for r in repo_rules}
-        for filename in list(managed_state.keys()):
-            if filename not in repo_filenames:
-                del managed_state[filename]
-        state["managed_rules"] = managed_state
-        save_state(state)
-
-        print("[PASS] Security Onion detections created/updated/deleted and activated successfully")
-
-    finally:
-        if client:
-            client.close()
-        if os.path.exists(key_path):
-            os.remove(key_path)
 
 
 if __name__ == "__main__":
