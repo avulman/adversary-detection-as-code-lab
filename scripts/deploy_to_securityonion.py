@@ -418,10 +418,26 @@ def verify_suricata_rule_present_in_ui(page: Page, rule: dict):
     print(f"[PASS] Verified detection exists in UI for {rule['name']}")
 
 
-def verify_suricata_rule_absent_in_ui(page: Page, rule: dict):
-    if find_rule_in_ui(page, rule):
-        fail(f"Rule still appears in UI after deletion: {rule['name']}")
-    print(f"[PASS] Verified detection removal in UI for {rule['name']}")
+def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
+    attempts = 5
+
+    for attempt in range(1, attempts + 1):
+        temp_page = open_detections_in_fresh_tab(context)
+        try:
+            still_present = find_rule_in_ui(temp_page, rule)
+            if not still_present:
+                print(f"[PASS] Verified detection removal in UI for {rule['name']}")
+                return
+
+            log(
+                f"Rule still appears in UI after deletion on attempt "
+                f"{attempt}/{attempts}: {rule['name']}"
+            )
+            temp_page.wait_for_timeout(LONG_WAIT_MS)
+        finally:
+            temp_page.close()
+
+    fail(f"Rule still appears in UI after deletion: {rule['name']}")
 
 
 def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
@@ -465,7 +481,6 @@ def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
 
 
 def choose_bulk_action_delete(page: Page):
-    # First try to anchor to the "Bulk Action:" text and use the nearest select/combobox.
     try:
         bulk_label = page.get_by_text(re.compile(r"Bulk Action\s*:", re.I)).first
         if bulk_label.count() > 0:
@@ -479,7 +494,6 @@ def choose_bulk_action_delete(page: Page):
                     if container.count() == 0:
                         continue
 
-                    # Native select in same region
                     select_box = container.locator("select").first
                     if select_box.count() > 0:
                         option_count = select_box.locator("option").count()
@@ -493,7 +507,6 @@ def choose_bulk_action_delete(page: Page):
                             except Exception:
                                 pass
 
-                    # Vuetify / combobox style control in same region
                     combo_candidates = [
                         container.get_by_role("combobox").first,
                         container.locator('[role="combobox"]').first,
@@ -516,7 +529,6 @@ def choose_bulk_action_delete(page: Page):
     except Exception:
         pass
 
-    # Next try to find a native select whose current value is Enable, then switch to Delete.
     select_candidates = page.locator("select")
     try:
         select_count = select_candidates.count()
@@ -544,7 +556,6 @@ def choose_bulk_action_delete(page: Page):
     except Exception:
         pass
 
-    # Finally try generic comboboxes currently showing Enable.
     combobox_candidates = [
         page.get_by_role("combobox"),
         page.locator('[role="combobox"]'),
@@ -697,7 +708,7 @@ def apply_single_change(page: Page, context: BrowserContext, change: dict, saved
     if change["action"] == "delete":
         delete_suricata_rule_in_ui(page, old_rule)
         differential_update_suricata(context)
-        verify_suricata_rule_absent_in_ui(page, old_rule)
+        verify_suricata_rule_absent_in_ui(context, old_rule)
         saved_state["suricata"].pop(change["name"], None)
         save_state(saved_state)
         return
@@ -705,7 +716,7 @@ def apply_single_change(page: Page, context: BrowserContext, change: dict, saved
     if change["action"] == "update":
         delete_suricata_rule_in_ui(page, old_rule)
         differential_update_suricata(context)
-        verify_suricata_rule_absent_in_ui(page, old_rule)
+        verify_suricata_rule_absent_in_ui(context, old_rule)
 
         create_suricata_rule_in_ui(page, new_rule)
         differential_update_suricata(context)
