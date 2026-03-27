@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+from urllib.parse import quote
 from playwright.sync_api import sync_playwright, Page, BrowserContext, Locator
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -252,29 +253,19 @@ def open_detections_in_fresh_tab(context: BrowserContext) -> Page:
     return page
 
 
+def build_detection_title_query(title: str) -> str:
+    return f'* AND so_detection.title:"{title}"'
+
+
 def search_for_rule(page: Page, text: str):
-    go_to_detections(page)
-
-    search_selectors = [
-        'input[placeholder*="search" i]',
-        '[data-aid*="search"] input',
-        'input[type="text"]',
-    ]
-
-    for selector in search_selectors:
-        try:
-            box = page.locator(selector).first
-            if box.count() > 0:
-                box.fill("")
-                page.wait_for_timeout(SHORT_WAIT_MS)
-                box.type(text, delay=60)
-                page.wait_for_timeout(MEDIUM_WAIT_MS)
-                return
-        except Exception:
-            pass
-
-    write_debug_html(page)
-    fail("Could not find the detections search box")
+    query = build_detection_title_query(text)
+    encoded_query = quote(query, safe="")
+    page.goto(
+        f"{SO_UI_URL}/#/detections?q={encoded_query}",
+        wait_until="domcontentloaded",
+    )
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(LONG_WAIT_MS)
 
 
 def _row_from_text_locator(text_locator: Locator) -> Locator | None:
