@@ -2,6 +2,7 @@
   "suricata": {
     "t1046_icmp_ping.rules": "alert icmp any any -> any any (msg:\"T1046 ICMP Ping Detected\"; itype:8; sid:1000002; rev:1;)",
     "t1046_nmap_syn_scan.rules": "alert tcp any any -> $HOME_NET any (msg:\"T1046 Nmap SYN Scan Detected\"; flags:S; flow:stateless; threshold:type both, track by_src, count 20, seconds 10; classtype:attempted-recon; sid:1000001; rev:1;)",
+    "t1059.001_powershell_download.rules": "alert http any any -> any any (msg:\"T1059.001 PowerShell Download via HTTP\"; flow:to_server,established; http.method; content:\"GET\"; http.uri; content:\".ps1\"; nocase; classtype:trojan-activity; sid:1000005; rev:1;)",
     "t1071.001_http_user_agent_python_requests.rules": "alert http any any -> $HOME_NET any (msg:\"T1071.001 Suspicious HTTP User-Agent Python Requests\"; http.user_agent; content:\"python-requests\"; nocase; sid:1000004; rev:1;)"
   },
   "zeek": {}
