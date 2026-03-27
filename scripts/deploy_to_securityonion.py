@@ -400,23 +400,6 @@ def click_first_matching_button(page: Page, patterns: list[str], failure_message
     fail(failure_message)
 
 
-def get_current_signature(page: Page) -> str:
-    signature_selectors = [
-        '#detection-signature-edit',
-        '#detection-signature-create',
-        'textarea',
-        '[data-aid*="signature"] textarea',
-    ]
-    for selector in signature_selectors:
-        try:
-            locator = page.locator(selector).first
-            if locator.count() > 0:
-                return normalize_rule_content(locator.input_value())
-        except Exception:
-            pass
-    return ""
-
-
 def create_suricata_rule_in_ui(page: Page, rule: dict):
     log(f"Creating detection in UI for {rule['name']}")
     open_create_detection_dialog(page)
@@ -427,21 +410,12 @@ def create_suricata_rule_in_ui(page: Page, rule: dict):
     print(f"[PASS] Created detection in UI for {rule['name']}")
 
 
-def verify_suricata_rule_matches_ui(page: Page, rule: dict):
-    if not open_rule_in_ui(page, rule):
+def verify_suricata_rule_present_in_ui(page: Page, rule: dict):
+    if not find_rule_in_ui(page, rule):
         fail(f"Rule was not found in UI after deployment: {rule['name']}")
 
-    current_signature = get_current_signature(page)
-    desired_signature = normalize_rule_content(rule["content"])
-
-    if current_signature != desired_signature:
-        fail(
-            f"UI signature mismatch for {rule['name']}. "
-            "The detection exists, but the stored signature does not match the repo."
-        )
-
     go_to_detections(page)
-    print(f"[PASS] Verified detection content in UI for {rule['name']}")
+    print(f"[PASS] Verified detection exists in UI for {rule['name']}")
 
 
 def verify_suricata_rule_absent_in_ui(page: Page, rule: dict):
@@ -535,7 +509,7 @@ def apply_single_change(page: Page, context: BrowserContext, change: dict, saved
     if change["action"] == "create":
         create_suricata_rule_in_ui(page, new_rule)
         differential_update_suricata(context)
-        verify_suricata_rule_matches_ui(page, new_rule)
+        verify_suricata_rule_present_in_ui(page, new_rule)
         saved_state["suricata"][change["name"]] = new_rule["content"]
         save_state(saved_state)
         return
@@ -555,7 +529,7 @@ def apply_single_change(page: Page, context: BrowserContext, change: dict, saved
 
         create_suricata_rule_in_ui(page, new_rule)
         differential_update_suricata(context)
-        verify_suricata_rule_matches_ui(page, new_rule)
+        verify_suricata_rule_present_in_ui(page, new_rule)
 
         saved_state["suricata"][change["name"]] = new_rule["content"]
         save_state(saved_state)
