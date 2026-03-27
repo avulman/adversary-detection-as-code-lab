@@ -49,11 +49,6 @@ def extract_msg(content: str, fallback: str) -> str:
     return match.group(1) if match else fallback
 
 
-def extract_sid(content: str):
-    match = re.search(r"sid:(\d+)", content)
-    return match.group(1) if match else None
-
-
 def ensure_state_dir():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -116,7 +111,6 @@ def parse_suricata_rule(name: str, content: str) -> dict:
         "name": name,
         "content": normalized,
         "msg": extract_msg(normalized, Path(name).stem),
-        "sid": extract_sid(normalized),
     }
 
 
@@ -263,8 +257,6 @@ def search_for_rule(page: Page, text: str):
 
 def rule_candidates(page: Page, rule: dict):
     candidates = []
-    if rule.get("sid"):
-        candidates.append(page.get_by_text(rule["sid"], exact=False))
     if rule.get("msg"):
         candidates.append(page.get_by_text(rule["msg"], exact=False))
     candidates.append(page.get_by_text(rule["name"], exact=False))
@@ -272,7 +264,7 @@ def rule_candidates(page: Page, rule: dict):
 
 
 def find_rule_in_ui(page: Page, rule: dict) -> bool:
-    lookup = rule.get("sid") or rule.get("msg") or rule["name"]
+    lookup = rule.get("msg") or rule["name"]
     search_for_rule(page, lookup)
 
     for candidate in rule_candidates(page, rule):
@@ -286,7 +278,7 @@ def find_rule_in_ui(page: Page, rule: dict) -> bool:
 
 
 def open_rule_in_ui(page: Page, rule: dict) -> bool:
-    lookup = rule.get("sid") or rule.get("msg") or rule["name"]
+    lookup = rule.get("msg") or rule["name"]
     search_for_rule(page, lookup)
 
     for candidate in rule_candidates(page, rule):
@@ -317,7 +309,7 @@ def open_create_detection_dialog(page: Page):
     for selector in plus_selectors:
         try:
             locator = page.locator(selector).first
-            if locator.is_visible(timeout=2000):
+            if locator.count() > 0 and locator.is_visible(timeout=2000):
                 locator.click(timeout=3000)
                 page.wait_for_timeout(MEDIUM_WAIT_MS)
                 return
