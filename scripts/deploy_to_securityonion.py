@@ -40,6 +40,28 @@ def write_debug_html(page: Page, filename: str = "so_debug_page.html"):
     print(f"[INFO] Wrote debug HTML to {debug_path}")
 
 
+def print_page_debug(page: Page, label: str):
+    print(f"[DEBUG] ===== {label} =====")
+    try:
+        print(f"[DEBUG] URL: {page.url}")
+    except Exception as e:
+        print(f"[DEBUG] Could not read page URL: {e}")
+
+    try:
+        text = page.locator("body").inner_text(timeout=5000)
+        if text:
+            trimmed = text[:12000]
+            print("[DEBUG] Visible page text start")
+            print(trimmed)
+            if len(text) > len(trimmed):
+                print("[DEBUG] ... visible text truncated ...")
+            print("[DEBUG] Visible page text end")
+        else:
+            print("[DEBUG] Visible page text is empty")
+    except Exception as e:
+        print(f"[DEBUG] Could not read visible page text: {e}")
+
+
 def normalize_rule_content(content: str) -> str:
     return " ".join(content.split())
 
@@ -271,7 +293,6 @@ def find_rule_row_in_ui(page: Page, rule: dict) -> Locator | None:
     lookup = rule.get("msg") or rule["name"]
     search_for_rule(page, lookup)
 
-    # Primary: exact detection title match from msg
     if rule.get("msg"):
         exact_msg_locator = page.get_by_text(rule["msg"], exact=True).first
         row = _row_from_text_locator(exact_msg_locator)
@@ -285,7 +306,6 @@ def find_rule_row_in_ui(page: Page, rule: dict) -> Locator | None:
         if row is not None:
             return row
 
-    # Fallback: filename if needed
     exact_name_locator = page.get_by_text(rule["name"], exact=True).first
     row = _row_from_text_locator(exact_name_locator)
     if row is not None:
@@ -460,6 +480,8 @@ def create_suricata_rule_in_ui(page: Page, rule: dict):
 
 def verify_suricata_rule_present_in_ui(page: Page, rule: dict):
     if not find_rule_in_ui(page, rule):
+        write_debug_html(page, "so_debug_verify_present_failure.html")
+        print_page_debug(page, f"verify present failure for {rule.get('msg') or rule['name']}")
         fail(f"Rule was not found in UI after deployment: {rule['name']}")
 
     go_to_detections(page)
@@ -467,23 +489,17 @@ def verify_suricata_rule_present_in_ui(page: Page, rule: dict):
 
 
 def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
-    attempts = 5
+    temp_page = open_detections_in_fresh_tab(context)
+    try:
+        still_present = find_rule_in_ui(temp_page, rule)
+        if not still_present:
+            print(f"[PASS] Verified detection removal in UI for {rule['name']}")
+            return
 
-    for attempt in range(1, attempts + 1):
-        temp_page = open_detections_in_fresh_tab(context)
-        try:
-            still_present = find_rule_in_ui(temp_page, rule)
-            if not still_present:
-                print(f"[PASS] Verified detection removal in UI for {rule['name']}")
-                return
-
-            log(
-                f"Rule row still appears in UI after deletion on attempt "
-                f"{attempt}/{attempts}: {rule.get('msg') or rule['name']}"
-            )
-            temp_page.wait_for_timeout(LONG_WAIT_MS)
-        finally:
-            temp_page.close()
+        write_debug_html(temp_page, "so_debug_verify_absent_failure.html")
+        print_page_debug(temp_page, f"verify absent failure for {rule.get('msg') or rule['name']}")
+    finally:
+        temp_page.close()
 
     fail(f"Rule still appears in UI after deletion: {rule['name']}")
 
@@ -623,6 +639,7 @@ def choose_bulk_action_delete(page: Page):
             pass
 
     write_debug_html(page, "so_debug_bulk_action_failure.html")
+    print_page_debug(page, "bulk action delete failure")
     fail("Could not set Bulk Action to Delete")
 
 
@@ -655,6 +672,7 @@ def click_go_button(page: Page):
         pass
 
     write_debug_html(page, "so_debug_go_button_failure.html")
+    print_page_debug(page, "go button failure")
     fail("Could not click GO button for bulk action")
 
 
@@ -662,6 +680,8 @@ def delete_suricata_rule_in_ui(page: Page, rule: dict):
     log(f"Deleting detection in UI for {rule['name']}")
 
     if not select_rule_checkbox_in_list(page, rule):
+        write_debug_html(page, "so_debug_delete_checkbox_failure.html")
+        print_page_debug(page, f"delete checkbox failure for {rule.get('msg') or rule['name']}")
         log(f"Rule not found in UI for deletion; continuing: {rule['name']}")
         return
 
@@ -691,6 +711,7 @@ def click_options_on_detections_page(page: Page):
             pass
 
     write_debug_html(page, "so_debug_options_failure.html")
+    print_page_debug(page, "options click failure")
     fail("Could not click Options on the detections list page")
 
 
@@ -703,6 +724,7 @@ def differential_update_suricata(context: BrowserContext):
             temp_page.get_by_text(re.compile(r"Differential Update", re.I)).click(force=True)
         except Exception:
             write_debug_html(temp_page, "so_debug_differential_update_failure.html")
+            print_page_debug(temp_page, "differential update click failure")
             fail("Could not click Differential Update")
 
         temp_page.wait_for_timeout(10000)
