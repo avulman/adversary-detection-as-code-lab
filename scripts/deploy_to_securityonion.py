@@ -3,7 +3,7 @@ import json
 import os
 import re
 import sys
-from playwright.sync_api import sync_playwright, Page, BrowserContext
+from playwright.sync_api import sync_playwright, Page, BrowserContext, Locator
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -255,42 +255,90 @@ def search_for_rule(page: Page, text: str):
     fail("Could not find the detections search box")
 
 
-def rule_candidates(page: Page, rule: dict):
-    candidates = []
-    if rule.get("msg"):
-        candidates.append(page.get_by_text(rule["msg"], exact=False))
-    candidates.append(page.get_by_text(rule["name"], exact=False))
-    return candidates
+def _row_from_text_locator(text_locator: Locator) -> Locator | None:
+    try:
+        if text_locator.count() == 0:
+            return None
+        row = text_locator.locator("xpath=ancestor::tr[1]")
+        if row.count() > 0:
+            return row.first
+    except Exception:
+        pass
+    return None
 
 
-def find_rule_in_ui(page: Page, rule: dict) -> bool:
+def find_rule_row_in_ui(page: Page, rule: dict) -> Locator | None:
     lookup = rule.get("msg") or rule["name"]
     search_for_rule(page, lookup)
 
-    for candidate in rule_candidates(page, rule):
+    # Primary: exact detection title match from msg
+    if rule.get("msg"):
+        exact_msg_locator = page.get_by_text(rule["msg"], exact=True).first
+        row = _row_from_text_locator(exact_msg_locator)
+        if row is not None:
+            return row
+
+        regex_msg_locator = page.get_by_text(
+            re.compile(rf"^{re.escape(rule['msg'])}$")
+        ).first
+        row = _row_from_text_locator(regex_msg_locator)
+        if row is not None:
+            return row
+
+    # Fallback: filename if needed
+    exact_name_locator = page.get_by_text(rule["name"], exact=True).first
+    row = _row_from_text_locator(exact_name_locator)
+    if row is not None:
+        return row
+
+    regex_name_locator = page.get_by_text(
+        re.compile(rf"^{re.escape(rule['name'])}$")
+    ).first
+    row = _row_from_text_locator(regex_name_locator)
+    if row is not None:
+        return row
+
+    return None
+
+
+def find_rule_in_ui(page: Page, rule: dict) -> bool:
+    row = find_rule_row_in_ui(page, rule)
+    return row is not None
+
+
+def open_rule_in_ui(page: Page, rule: dict) -> bool:
+    row = find_rule_row_in_ui(page, rule)
+    if row is None:
+        return False
+
+    click_targets = []
+    if rule.get("msg"):
+        click_targets.append(row.get_by_text(rule["msg"], exact=True).first)
+        click_targets.append(
+            row.get_by_text(re.compile(rf"^{re.escape(rule['msg'])}$")).first
+        )
+    click_targets.append(row.get_by_text(rule["name"], exact=True).first)
+    click_targets.append(
+        row.get_by_text(re.compile(rf"^{re.escape(rule['name'])}$")).first
+    )
+
+    for target in click_targets:
         try:
-            if candidate.count() > 0:
+            if target.count() > 0:
+                target.click(force=True, timeout=3000)
+                page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(LONG_WAIT_MS)
                 return True
         except Exception:
             pass
 
-    return False
-
-
-def open_rule_in_ui(page: Page, rule: dict) -> bool:
-    lookup = rule.get("msg") or rule["name"]
-    search_for_rule(page, lookup)
-
-    for candidate in rule_candidates(page, rule):
-        try:
-            candidate.first.click(force=True, timeout=3000)
-            page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(LONG_WAIT_MS)
-            return True
-        except Exception:
-            pass
-
-    return False
+    try:
+        row.click(force=True, timeout=3000)
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(LONG_WAIT_MS)
+        return True
+    except Exception:
+        return False
 
 
 def open_create_detection_dialog(page: Page):
@@ -430,8 +478,8 @@ def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
                 return
 
             log(
-                f"Rule still appears in UI after deletion on attempt "
-                f"{attempt}/{attempts}: {rule['name']}"
+                f"Rule row still appears in UI after deletion on attempt "
+                f"{attempt}/{attempts}: {rule.get('msg') or rule['name']}"
             )
             temp_page.wait_for_timeout(LONG_WAIT_MS)
         finally:
@@ -441,39 +489,23 @@ def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
 
 
 def select_rule_checkbox_in_list(page: Page, rule: dict) -> bool:
-    lookup = rule.get("msg") or rule["name"]
-    search_for_rule(page, lookup)
+    row = find_rule_row_in_ui(page, rule)
+    if row is None:
+        return False
 
-    row_locator_candidates = []
+    checkbox_selectors = [
+        'input[type="checkbox"]',
+        '[role="checkbox"]',
+        'label:has(input[type="checkbox"])',
+    ]
 
-    if rule.get("msg"):
-        row_locator_candidates.append(page.get_by_text(rule["msg"], exact=False).first)
-    row_locator_candidates.append(page.get_by_text(rule["name"], exact=False).first)
-
-    for candidate in row_locator_candidates:
+    for selector in checkbox_selectors:
         try:
-            if candidate.count() == 0:
-                continue
-
-            row = candidate.locator("xpath=ancestor::tr[1]")
-            if row.count() == 0:
-                continue
-
-            checkbox_selectors = [
-                'input[type="checkbox"]',
-                '[role="checkbox"]',
-                'label:has(input[type="checkbox"])',
-            ]
-
-            for selector in checkbox_selectors:
-                try:
-                    checkbox = row.locator(selector).first
-                    if checkbox.count() > 0:
-                        checkbox.click(force=True, timeout=3000)
-                        page.wait_for_timeout(MEDIUM_WAIT_MS)
-                        return True
-                except Exception:
-                    pass
+            checkbox = row.locator(selector).first
+            if checkbox.count() > 0:
+                checkbox.click(force=True, timeout=3000)
+                page.wait_for_timeout(MEDIUM_WAIT_MS)
+                return True
         except Exception:
             pass
 
