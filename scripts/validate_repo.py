@@ -252,10 +252,69 @@ def collect_scenario_stems() -> set[str]:
     return stems
 
 
+def extract_technique_from_stem(stem: str) -> str | None:
+    """
+    Converts a detection/scenario stem like:
+      t1003.001_lsass_access -> T1003.001
+      t1046_nmap_syn_scan -> T1046
+    """
+    match = re.match(r"^(t\d{4}(?:\.\d{3})?)", stem, re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).upper()
+
+
+def collect_all_detection_info() -> list[dict]:
+    detections = []
+
+    for path in sorted(SPLUNK_DIR.glob("*.spl")):
+        metadata, _ = parse_splunk_detection(path)
+        detections.append(
+            {
+                "stem": path.stem,
+                "relative_path": str(path.relative_to(ROOT)),
+                "technique": metadata["mitre"].strip().upper(),
+            }
+        )
+
+    for path in sorted(SO_SURICATA_DIR.glob("*.rules")):
+        technique = extract_technique_from_stem(path.stem)
+        if not technique:
+            fail(
+                f"Could not derive MITRE technique from Suricata filename: "
+                f"{path.relative_to(ROOT)}"
+            )
+        detections.append(
+            {
+                "stem": path.stem,
+                "relative_path": str(path.relative_to(ROOT)),
+                "technique": technique,
+            }
+        )
+
+    if SO_ZEEK_DIR.exists():
+        for path in sorted(p for p in SO_ZEEK_DIR.rglob("*") if p.is_file()):
+            technique = extract_technique_from_stem(path.stem)
+            if not technique:
+                fail(
+                    f"Could not derive MITRE technique from Zeek filename: "
+                    f"{path.relative_to(ROOT)}"
+                )
+            detections.append(
+                {
+                    "stem": path.stem,
+                    "relative_path": str(path.relative_to(ROOT)),
+                    "technique": technique,
+                }
+            )
+
+    return detections
+
+
 def validate_detection_scenarios_and_matrix():
-    detections = collect_all_detection_stems()
+    detections = collect_all_detection_info()
     scenarios = collect_scenario_stems()
-    matrix_text = MATRIX_FILE.read_text(encoding="utf-8", errors="ignore").lower()
+    matrix_text = MATRIX_FILE.read_text(encoding="utf-8", errors="ignore")
 
     if not detections:
         fail("No detection files found across Splunk, Suricata, or Zeek")
@@ -263,18 +322,21 @@ def validate_detection_scenarios_and_matrix():
     missing_scenarios = []
     missing_matrix_entries = []
 
-    for stem, rel_path in sorted(detections.items()):
+    for detection in detections:
+        stem = detection["stem"]
+        rel_path = detection["relative_path"]
+        technique = detection["technique"]
         scenario_name = f"{stem}.md"
 
         if stem not in scenarios:
-            missing_scenarios.append(f"{rel_path} -> validations/scenarios/{scenario_name}")
+            missing_scenarios.append(
+                f"{rel_path} -> validations/scenarios/{scenario_name}"
+            )
 
-        stem_in_matrix = stem.lower() in matrix_text
-        scenario_in_matrix = scenario_name.lower() in matrix_text
-
-        if not (stem_in_matrix or scenario_in_matrix):
+        if technique not in matrix_text:
             missing_matrix_entries.append(
-                f"{rel_path} -> expected reference to '{stem}' or '{scenario_name}' in {MATRIX_FILE.relative_to(ROOT)}"
+                f"{rel_path} -> expected explicit matrix entry containing '{technique}' in "
+                f"{MATRIX_FILE.relative_to(ROOT)}"
             )
 
     if missing_scenarios:
@@ -285,7 +347,7 @@ def validate_detection_scenarios_and_matrix():
 
     if missing_matrix_entries:
         fail(
-            "Detection file(s) missing validation matrix entry/mention: "
+            "Detection file(s) missing validation matrix technique entry: "
             + "; ".join(missing_matrix_entries)
         )
 
