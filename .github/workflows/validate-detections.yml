@@ -30,3 +30,11 @@ jobs:
           SPLUNK_USERNAME: ${{ secrets.SPLUNK_USERNAME }}
           SPLUNK_PASSWORD: ${{ secrets.SPLUNK_PASSWORD }}
         run: py scripts\validate_detection_syntax.py
+
+      - name: Run Splunk detection true-positive tests
+        env:
+          SPLUNK_BASE_URL: ${{ secrets.SPLUNK_BASE_URL }}
+          SPLUNK_USERNAME: ${{ secrets.SPLUNK_USERNAME }}
+          SPLUNK_PASSWORD: ${{ secrets.SPLUNK_PASSWORD }}
+          SPLUNK_TEST_INDEX: detection_test
+        run: py scripts\test_splunk_detections.py

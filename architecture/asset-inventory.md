@@ -60,7 +60,7 @@ The lab is designed to emulate a small enterprise environment with both host-bas
 - Supports domain authentication and account management
 - Generates authentication and directory-related telemetry
 
-#### Example Accounts
+#### Accounts
 - `corp\anton.admin`
 - `corp\anton.user`
 
