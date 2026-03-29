@@ -1,10 +1,9 @@
 from pathlib import Path
 import json
+import re
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-
-README_FILE = ROOT / "README.md"
 
 SPLUNK_DIR = ROOT / "detections" / "splunk" / "mitre-att&ck"
 SO_BASE_DIR = ROOT / "detections" / "security-onion"
@@ -13,6 +12,7 @@ SO_ZEEK_DIR = SO_BASE_DIR / "zeek"
 
 VALIDATIONS_DIR = ROOT / "validations"
 SCENARIOS_DIR = VALIDATIONS_DIR / "scenarios"
+MATRIX_FILE = VALIDATIONS_DIR / "detection-validation-matrix.md"
 
 STATE_DIR = ROOT / "state"
 STATE_FILE = STATE_DIR / "securityonion_rule_state.json"
@@ -33,58 +33,25 @@ def normalize_rule_content(content: str) -> str:
     return " ".join(content.split())
 
 
-def validate_required_paths():
-    required_paths = [
-        README_FILE,
-        SPLUNK_DIR,
-        SO_BASE_DIR,
-        VALIDATIONS_DIR,
-        SCENARIOS_DIR,
-        STATE_DIR,
-    ]
-
-    for path in required_paths:
-        if not path.exists():
-            fail(f"Required path missing: {path.relative_to(ROOT)}")
-
-    if not README_FILE.is_file():
-        fail("README.md must be a file")
-
-    if not SPLUNK_DIR.is_dir():
-        fail("detections/splunk/mitre-att&ck must be a directory")
-
-    if not SO_BASE_DIR.is_dir():
-        fail("detections/security-onion must be a directory")
-
-    if not VALIDATIONS_DIR.is_dir():
-        fail("validations must be a directory")
-
-    if not SCENARIOS_DIR.is_dir():
-        fail("validations/scenarios must be a directory")
-
-    if not STATE_DIR.is_dir():
-        fail("state must be a directory")
-
-    if STATE_FILE.exists() and not STATE_FILE.is_file():
-        fail(
-            "state/securityonion_rule_state.json exists but is not a file. "
-            "It must be a JSON file, not a directory."
-        )
-
-
 def load_state() -> dict:
     if not STATE_FILE.exists():
         return {"suricata": {}, "zeek": {}}
 
+    if not STATE_FILE.is_file():
+        fail(
+            "state/securityonion_rule_state.json exists but is not a file. "
+            "It must be a JSON file."
+        )
+
     try:
         raw = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        fail(f"{STATE_FILE.relative_to(ROOT)} is not valid JSON: {e}")
+        fail(f"State file is not valid JSON: {e}")
     except Exception as e:
-        fail(f"Unable to read {STATE_FILE.relative_to(ROOT)}: {e}")
+        fail(f"Unable to read state file: {e}")
 
     if not isinstance(raw, dict):
-        fail("securityonion_rule_state.json must contain a top-level JSON object")
+        fail("State file must contain a top-level JSON object")
 
     for engine in ALLOWED_STATE_ENGINES:
         raw.setdefault(engine, {})
@@ -92,22 +59,18 @@ def load_state() -> dict:
     extra_keys = set(raw.keys()) - ALLOWED_STATE_ENGINES
     if extra_keys:
         fail(
-            "securityonion_rule_state.json contains unsupported top-level keys: "
+            "State file contains unsupported top-level keys: "
             + ", ".join(sorted(extra_keys))
         )
 
     for engine, entries in raw.items():
         if not isinstance(entries, dict):
-            fail(f"State section '{engine}' must be a JSON object")
-
-        for rule_name, rule_content in entries.items():
-            if not isinstance(rule_name, str) or not rule_name.strip():
-                fail(f"State section '{engine}' contains an invalid rule name")
-            if not isinstance(rule_content, str) or not rule_content.strip():
-                fail(
-                    f"State section '{engine}' entry '{rule_name}' must contain "
-                    "a non-empty rule string"
-                )
+            fail(f"State section '{engine}' must be an object")
+        for name, content in entries.items():
+            if not isinstance(name, str) or not name.strip():
+                fail(f"Invalid rule name found in state section '{engine}'")
+            if not isinstance(content, str) or not content.strip():
+                fail(f"State entry '{engine}:{name}' must contain a non-empty rule string")
 
     return raw
 
@@ -137,7 +100,7 @@ def parse_splunk_detection(path: Path):
         "email_message",
     ]
 
-    missing = [key for key in required if key not in metadata]
+    missing = [k for k in required if k not in metadata]
     if missing:
         fail(f"{path.name} missing metadata keys: {', '.join(missing)}")
 
@@ -145,6 +108,33 @@ def parse_splunk_detection(path: Path):
         fail(f"{path.name} has an empty search query")
 
     return metadata, query
+
+
+def validate_required_paths():
+    required_dirs = [
+        SPLUNK_DIR,
+        SO_SURICATA_DIR,
+        VALIDATIONS_DIR,
+        SCENARIOS_DIR,
+        STATE_DIR,
+    ]
+
+    required_files = [
+        MATRIX_FILE,
+        STATE_FILE,
+    ]
+
+    for path in required_dirs:
+        if not path.exists():
+            fail(f"Required directory missing: {path.relative_to(ROOT)}")
+        if not path.is_dir():
+            fail(f"Expected directory but found non-directory: {path.relative_to(ROOT)}")
+
+    for path in required_files:
+        if not path.exists():
+            fail(f"Required file missing: {path.relative_to(ROOT)}")
+        if not path.is_file():
+            fail(f"Expected file but found non-file: {path.relative_to(ROOT)}")
 
 
 def validate_splunk_detections():
@@ -159,7 +149,7 @@ def validate_splunk_detections():
             fail(f"{spl_file.name} has invalid MITRE technique value: {metadata['mitre']}")
 
         if "index=" not in query.lower():
-            log(f"[WARN] {spl_file.name} may not explicitly reference an index")
+            print(f"[WARN] {spl_file.name} may not explicitly reference an index")
 
         content = spl_file.read_text(encoding="utf-8", errors="ignore")
         if "mitre" not in content.lower() and "attack" not in content.lower():
@@ -237,6 +227,69 @@ def diff_security_onion_repo_vs_state(repo_state: dict, saved_state: dict) -> li
     return changes
 
 
+def collect_all_detection_stems() -> dict[str, str]:
+    detections: dict[str, str] = {}
+
+    for path in sorted(SPLUNK_DIR.glob("*.spl")):
+        detections[path.stem] = str(path.relative_to(ROOT))
+
+    for path in sorted(SO_SURICATA_DIR.glob("*.rules")):
+        detections[path.stem] = str(path.relative_to(ROOT))
+
+    if SO_ZEEK_DIR.exists():
+        for path in sorted(p for p in SO_ZEEK_DIR.rglob("*") if p.is_file()):
+            detections[path.stem] = str(path.relative_to(ROOT))
+
+    return detections
+
+
+def collect_scenario_stems() -> set[str]:
+    stems = set()
+    for path in sorted(SCENARIOS_DIR.glob("*.md")):
+        if path.name == "_scenarios_template.md":
+            continue
+        stems.add(path.stem)
+    return stems
+
+
+def validate_detection_scenarios_and_matrix():
+    detections = collect_all_detection_stems()
+    scenarios = collect_scenario_stems()
+    matrix_text = MATRIX_FILE.read_text(encoding="utf-8", errors="ignore").lower()
+
+    if not detections:
+        fail("No detection files found across Splunk, Suricata, or Zeek")
+
+    missing_scenarios = []
+    missing_matrix_entries = []
+
+    for stem, rel_path in sorted(detections.items()):
+        scenario_name = f"{stem}.md"
+
+        if stem not in scenarios:
+            missing_scenarios.append(f"{rel_path} -> validations/scenarios/{scenario_name}")
+
+        stem_in_matrix = stem.lower() in matrix_text
+        scenario_in_matrix = scenario_name.lower() in matrix_text
+
+        if not (stem_in_matrix or scenario_in_matrix):
+            missing_matrix_entries.append(
+                f"{rel_path} -> expected reference to '{stem}' or '{scenario_name}' in {MATRIX_FILE.relative_to(ROOT)}"
+            )
+
+    if missing_scenarios:
+        fail(
+            "Detection file(s) missing corresponding validation scenario(s): "
+            + "; ".join(missing_scenarios)
+        )
+
+    if missing_matrix_entries:
+        fail(
+            "Detection file(s) missing validation matrix entry/mention: "
+            + "; ".join(missing_matrix_entries)
+        )
+
+
 def validate_single_security_onion_change():
     saved_state = load_state()
     repo_state = collect_security_onion_repo_rules()
@@ -279,6 +332,7 @@ def validate_single_security_onion_change():
 def main():
     validate_required_paths()
     validate_splunk_detections()
+    validate_detection_scenarios_and_matrix()
     validate_single_security_onion_change()
     print("[PASS] Repository validation succeeded")
 
