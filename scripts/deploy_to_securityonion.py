@@ -64,8 +64,12 @@ def print_page_debug(page: Page, label: str):
         print(f"[DEBUG] Could not read visible page text: {e}")
 
 
-def normalize_rule_content(content: str) -> str:
+def normalize_rule_for_compare(content: str) -> str:
     return " ".join(content.split())
+
+
+def clean_rule_content(content: str) -> str:
+    return content.strip()
 
 
 def extract_msg(content: str, fallback: str) -> str:
@@ -147,22 +151,22 @@ def save_state(state: dict):
 
 
 def parse_suricata_rule(name: str, content: str) -> dict:
-    normalized = normalize_rule_content(content)
+    raw = clean_rule_content(content)
     return {
         "engine": "suricata",
         "name": name,
-        "content": normalized,
-        "lookup": extract_msg(normalized, Path(name).stem),
+        "content": raw,
+        "lookup": extract_msg(raw, Path(name).stem),
     }
 
 
 def parse_sigma_rule(name: str, content: str) -> dict:
-    normalized = normalize_rule_content(content)
-    title = extract_yaml_title(content, Path(name).stem)
+    raw = clean_rule_content(content)
+    title = extract_yaml_title(raw, Path(name).stem)
     return {
         "engine": "sigma",
         "name": name,
-        "content": normalized,
+        "content": raw,
         "lookup": title,
         "title": title,
     }
@@ -181,7 +185,7 @@ def collect_repo_state() -> dict:
             content = path.read_text(encoding="utf-8", errors="ignore").strip()
             if not content:
                 fail(f"{path.relative_to(ROOT)} is empty")
-            repo_state["suricata"][path.name] = normalize_rule_content(content)
+            repo_state["suricata"][path.name] = clean_rule_content(content)
 
     if SO_SIGMA_DIR.exists():
         if not SO_SIGMA_DIR.is_dir():
@@ -193,7 +197,7 @@ def collect_repo_state() -> dict:
             if not content:
                 fail(f"{path.relative_to(ROOT)} is empty")
             relative_name = path.relative_to(SO_SIGMA_DIR).as_posix()
-            repo_state["sigma"][relative_name] = normalize_rule_content(content)
+            repo_state["sigma"][relative_name] = clean_rule_content(content)
 
     return repo_state
 
@@ -231,16 +235,16 @@ def build_repo_state_changes(repo_state: dict, saved_state: dict) -> list[dict]:
             )
 
         for name in sorted(repo_names & state_names):
-            repo_content = normalize_rule_content(repo_rules[name])
-            state_content = normalize_rule_content(state_rules[name])
+            repo_content = normalize_rule_for_compare(repo_rules[name])
+            state_content = normalize_rule_for_compare(state_rules[name])
             if repo_content != state_content:
                 changes.append(
                     {
                         "engine": engine,
                         "action": "update",
                         "name": name,
-                        "new_content": repo_content,
-                        "old_content": state_content,
+                        "new_content": repo_rules[name],
+                        "old_content": state_rules[name],
                     }
                 )
 
@@ -392,7 +396,7 @@ def _select_language(page: Page, value_pattern: str):
             break
 
     if language is None:
-        write_debug_html(page)
+        write_debug_html(page, "so_debug_language_missing.html")
         fail("Could not find Language field")
 
     language.click(force=True)
@@ -401,11 +405,30 @@ def _select_language(page: Page, value_pattern: str):
     page.wait_for_timeout(MEDIUM_WAIT_MS)
 
 
-def fill_suricata_detection_form(page: Page, rule: dict):
+def _select_license(page: Page):
     license_selectors = [
         '#detection-license-create',
         '#detection-license-edit',
     ]
+
+    license_box = None
+    for selector in license_selectors:
+        locator = page.locator(selector)
+        if locator.count() > 0:
+            license_box = locator.first
+            break
+
+    if license_box is None:
+        write_debug_html(page, "so_debug_license_missing.html")
+        fail("Could not find License field")
+
+    license_box.click(force=True)
+    page.wait_for_timeout(SHORT_WAIT_MS)
+    page.get_by_role("option", name=re.compile(r"GPL-2.0", re.I)).click()
+    page.wait_for_timeout(MEDIUM_WAIT_MS)
+
+
+def fill_suricata_detection_form(page: Page, rule: dict):
     signature_selectors = [
         '#detection-signature-create',
         '#detection-signature-edit',
@@ -414,83 +437,58 @@ def fill_suricata_detection_form(page: Page, rule: dict):
     ]
 
     _select_language(page, r"^Suricata$")
-
-    license_box = None
-    for selector in license_selectors:
-        locator = page.locator(selector)
-        if locator.count() > 0:
-            license_box = locator.first
-            break
-
-    if license_box is None:
-        write_debug_html(page)
-        fail("Could not find License field")
-
-    license_box.click(force=True)
-    page.wait_for_timeout(SHORT_WAIT_MS)
-    page.get_by_role("option", name=re.compile(r"GPL-2.0", re.I)).click()
-    page.wait_for_timeout(MEDIUM_WAIT_MS)
+    _select_license(page)
 
     for selector in signature_selectors:
         try:
             locator = page.locator(selector).first
-            if locator.count() > 0:
-                locator.click(force=True)
-                page.wait_for_timeout(SHORT_WAIT_MS)
-                locator.fill(rule["content"])
-                page.wait_for_timeout(MEDIUM_WAIT_MS)
-                return
+            if locator.count() == 0:
+                continue
+
+            locator.click(force=True)
+            page.wait_for_timeout(SHORT_WAIT_MS)
+            locator.fill("")
+            page.wait_for_timeout(SHORT_WAIT_MS)
+            locator.fill(rule["content"])
+            page.wait_for_timeout(MEDIUM_WAIT_MS)
+            return
         except Exception:
             pass
 
-    write_debug_html(page)
+    write_debug_html(page, "so_debug_suricata_editor_missing.html")
     fail("Could not fill Signature field")
 
 
 def fill_sigma_detection_form(page: Page, rule: dict):
-    license_selectors = [
-        '#detection-license-create',
-        '#detection-license-edit',
-    ]
     signature_selectors = [
         '#detection-signature-create',
         '#detection-signature-edit',
         'textarea',
         '[data-aid*="signature"] textarea',
+        '[data-aid*="sigma"] textarea',
     ]
 
     _select_language(page, r"^Sigma$")
-
-    license_box = None
-    for selector in license_selectors:
-        locator = page.locator(selector)
-        if locator.count() > 0:
-            license_box = locator.first
-            break
-
-    if license_box is None:
-        write_debug_html(page)
-        fail("Could not find License field")
-
-    license_box.click(force=True)
-    page.wait_for_timeout(SHORT_WAIT_MS)
-    page.get_by_role("option", name=re.compile(r"GPL-2.0", re.I)).click()
-    page.wait_for_timeout(MEDIUM_WAIT_MS)
+    _select_license(page)
 
     for selector in signature_selectors:
         try:
             locator = page.locator(selector).first
-            if locator.count() > 0:
-                locator.click(force=True)
-                page.wait_for_timeout(SHORT_WAIT_MS)
-                locator.fill(rule["content"])
-                page.wait_for_timeout(MEDIUM_WAIT_MS)
-                return
+            if locator.count() == 0:
+                continue
+
+            locator.click(force=True)
+            page.wait_for_timeout(SHORT_WAIT_MS)
+            locator.fill("")
+            page.wait_for_timeout(SHORT_WAIT_MS)
+            locator.fill(rule["content"])
+            page.wait_for_timeout(MEDIUM_WAIT_MS)
+            return
         except Exception:
             pass
 
-    write_debug_html(page)
-    fail("Could not fill Signature field")
+    write_debug_html(page, "so_debug_sigma_editor_missing.html")
+    fail("Could not fill Sigma rule field")
 
 
 def click_first_matching_button(page: Page, patterns: list[str], failure_message: str):
@@ -523,6 +521,8 @@ def create_suricata_rule_in_ui(page: Page, rule: dict):
 
 def create_sigma_rule_in_ui(page: Page, rule: dict):
     log(f"Creating Sigma detection in UI for {rule['name']}")
+    log(f"Sigma title parsed as: {rule['title']}")
+    log(f"Sigma content length: {len(rule['content'])}")
     open_create_detection_dialog(page)
     fill_sigma_detection_form(page, rule)
     click_first_matching_button(page, [r"^Create$"], "Could not click Create button")
