@@ -1,0 +1,26 @@
+title: T1021.004 SSH Connection in Zeek Conn
+id: 6f7a5a80-a0ea-4fd3-8db3-c3i8e4f9b707
+status: experimental
+description: Detects network connections to TCP port 22 in Zeek conn logs, which may indicate SSH activity associated with remote access or lateral movement.
+author: Anton Vulman
+date: 2026-03-29
+references:
+  - https://attack.mitre.org/techniques/T1021/004/
+logsource:
+  product: zeek
+  service: conn
+detection:
+  selection_dataset:
+    event.dataset: zeek.conn
+  selection_port:
+    destination.port: 22
+  selection_proto:
+    network.transport: tcp
+  condition: selection_dataset and selection_port and selection_proto
+falsepositives:
+  - Legitimate administrative SSH activity
+  - Approved automation using SSH
+level: medium
+tags:
+  - attack.lateral-movement
+  - attack.t1021.004
