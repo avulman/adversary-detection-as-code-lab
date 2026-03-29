@@ -4,13 +4,14 @@ import os
 import re
 import sys
 from urllib.parse import quote
+
 from playwright.sync_api import sync_playwright, Page, BrowserContext, Locator
 
 ROOT = Path(__file__).resolve().parent.parent
 
 SO_BASE_DIR = ROOT / "detections" / "security-onion"
 SO_SURICATA_DIR = SO_BASE_DIR / "suricata"
-SO_ZEEK_DIR = SO_BASE_DIR / "zeek"
+SO_SIGMA_DIR = SO_BASE_DIR / "sigma"
 
 STATE_DIR = ROOT / "state"
 STATE_FILE = STATE_DIR / "securityonion_rule_state.json"
@@ -23,7 +24,7 @@ SHORT_WAIT_MS = 1500
 MEDIUM_WAIT_MS = 3000
 LONG_WAIT_MS = 5000
 
-ALLOWED_STATE_ENGINES = {"suricata", "zeek"}
+ALLOWED_STATE_ENGINES = {"suricata", "sigma"}
 
 
 def fail(msg: str):
@@ -69,7 +70,21 @@ def normalize_rule_content(content: str) -> str:
 
 def extract_msg(content: str, fallback: str) -> str:
     match = re.search(r'msg:"([^"]+)"', content)
-    return match.group(1) if match else fallback
+    return match.group(1).strip() if match else fallback
+
+
+def extract_yaml_title(content: str, fallback: str) -> str:
+    match = re.search(r"(?im)^\s*title:\s*(.+?)\s*$", content)
+    if not match:
+        return fallback
+
+    value = match.group(1).strip()
+    if (value.startswith('"') and value.endswith('"')) or (
+        value.startswith("'") and value.endswith("'")
+    ):
+        value = value[1:-1].strip()
+
+    return value or fallback
 
 
 def ensure_state_dir():
@@ -80,7 +95,7 @@ def load_state() -> dict:
     ensure_state_dir()
 
     if not STATE_FILE.exists():
-        return {"suricata": {}, "zeek": {}}
+        return {"suricata": {}, "sigma": {}}
 
     if not STATE_FILE.is_file():
         fail(
@@ -97,6 +112,10 @@ def load_state() -> dict:
 
     if not isinstance(raw, dict):
         fail("State file must contain a top-level JSON object")
+
+    # Allow legacy zeek key to exist and silently drop it.
+    if "zeek" in raw:
+        raw.pop("zeek", None)
 
     for engine in ALLOWED_STATE_ENGINES:
         raw.setdefault(engine, {})
@@ -133,14 +152,26 @@ def parse_suricata_rule(name: str, content: str) -> dict:
         "engine": "suricata",
         "name": name,
         "content": normalized,
-        "msg": extract_msg(normalized, Path(name).stem),
+        "lookup": extract_msg(normalized, Path(name).stem),
+    }
+
+
+def parse_sigma_rule(name: str, content: str) -> dict:
+    normalized = normalize_rule_content(content)
+    title = extract_yaml_title(content, Path(name).stem)
+    return {
+        "engine": "sigma",
+        "name": name,
+        "content": normalized,
+        "lookup": title,
+        "title": title,
     }
 
 
 def collect_repo_state() -> dict:
     repo_state = {
         "suricata": {},
-        "zeek": {},
+        "sigma": {},
     }
 
     if SO_SURICATA_DIR.exists():
@@ -152,15 +183,17 @@ def collect_repo_state() -> dict:
                 fail(f"{path.relative_to(ROOT)} is empty")
             repo_state["suricata"][path.name] = normalize_rule_content(content)
 
-    if SO_ZEEK_DIR.exists():
-        if not SO_ZEEK_DIR.is_dir():
-            fail("detections/security-onion/zeek must be a directory")
-        for path in sorted(p for p in SO_ZEEK_DIR.rglob("*") if p.is_file()):
+    if SO_SIGMA_DIR.exists():
+        if not SO_SIGMA_DIR.is_dir():
+            fail("detections/security-onion/sigma must be a directory")
+
+        sigma_files = sorted(list(SO_SIGMA_DIR.rglob("*.yml")) + list(SO_SIGMA_DIR.rglob("*.yaml")))
+        for path in sigma_files:
             content = path.read_text(encoding="utf-8", errors="ignore").strip()
             if not content:
                 fail(f"{path.relative_to(ROOT)} is empty")
-            relative_name = path.relative_to(SO_ZEEK_DIR).as_posix()
-            repo_state["zeek"][relative_name] = normalize_rule_content(content)
+            relative_name = path.relative_to(SO_SIGMA_DIR).as_posix()
+            repo_state["sigma"][relative_name] = normalize_rule_content(content)
 
     return repo_state
 
@@ -254,7 +287,8 @@ def open_detections_in_fresh_tab(context: BrowserContext) -> Page:
 
 
 def build_detection_title_query(title: str) -> str:
-    return f'* AND so_detection.title:"{title}"'
+    escaped = title.replace('"', '\\"')
+    return f'* AND so_detection.title:"{escaped}"'
 
 
 def search_for_rule(page: Page, text: str):
@@ -281,19 +315,20 @@ def _row_from_text_locator(text_locator: Locator) -> Locator | None:
 
 
 def find_rule_row_in_ui(page: Page, rule: dict) -> Locator | None:
-    lookup = rule.get("msg") or rule["name"]
+    lookup = rule.get("lookup") or rule["name"]
     search_for_rule(page, lookup)
 
-    if rule.get("msg"):
-        exact_msg_locator = page.get_by_text(rule["msg"], exact=True).first
-        row = _row_from_text_locator(exact_msg_locator)
+    title_or_msg = rule.get("lookup")
+    if title_or_msg:
+        exact_locator = page.get_by_text(title_or_msg, exact=True).first
+        row = _row_from_text_locator(exact_locator)
         if row is not None:
             return row
 
-        regex_msg_locator = page.get_by_text(
-            re.compile(rf"^{re.escape(rule['msg'])}$")
+        regex_locator = page.get_by_text(
+            re.compile(rf"^{re.escape(title_or_msg)}$")
         ).first
-        row = _row_from_text_locator(regex_msg_locator)
+        row = _row_from_text_locator(regex_locator)
         if row is not None:
             return row
 
@@ -343,20 +378,10 @@ def open_create_detection_dialog(page: Page):
     fail("Could not find/click the create button on the Detections page")
 
 
-def fill_suricata_detection_form(page: Page, rule: dict):
+def _select_language(page: Page, value_pattern: str):
     language_selectors = [
         '#detection-language-create',
         '#detection-language-edit',
-    ]
-    license_selectors = [
-        '#detection-license-create',
-        '#detection-license-edit',
-    ]
-    signature_selectors = [
-        '#detection-signature-create',
-        '#detection-signature-edit',
-        'textarea',
-        '[data-aid*="signature"] textarea',
     ]
 
     language = None
@@ -372,8 +397,23 @@ def fill_suricata_detection_form(page: Page, rule: dict):
 
     language.click(force=True)
     page.wait_for_timeout(SHORT_WAIT_MS)
-    page.get_by_role("option", name=re.compile(r"^Suricata$", re.I)).click()
+    page.get_by_role("option", name=re.compile(value_pattern, re.I)).click()
     page.wait_for_timeout(MEDIUM_WAIT_MS)
+
+
+def fill_suricata_detection_form(page: Page, rule: dict):
+    license_selectors = [
+        '#detection-license-create',
+        '#detection-license-edit',
+    ]
+    signature_selectors = [
+        '#detection-signature-create',
+        '#detection-signature-edit',
+        'textarea',
+        '[data-aid*="signature"] textarea',
+    ]
+
+    _select_language(page, r"^Suricata$")
 
     license_box = None
     for selector in license_selectors:
@@ -407,6 +447,33 @@ def fill_suricata_detection_form(page: Page, rule: dict):
     fail("Could not fill Signature field")
 
 
+def fill_sigma_detection_form(page: Page, rule: dict):
+    sigma_selectors = [
+        '#detection-signature-create',
+        '#detection-signature-edit',
+        'textarea',
+        '[data-aid*="signature"] textarea',
+        '[data-aid*="sigma"] textarea',
+    ]
+
+    _select_language(page, r"^Sigma$")
+
+    for selector in sigma_selectors:
+        try:
+            locator = page.locator(selector).first
+            if locator.count() > 0:
+                locator.click(force=True)
+                page.wait_for_timeout(SHORT_WAIT_MS)
+                locator.fill(rule["content"])
+                page.wait_for_timeout(MEDIUM_WAIT_MS)
+                return
+        except Exception:
+            pass
+
+    write_debug_html(page)
+    fail("Could not fill Sigma rule field")
+
+
 def click_first_matching_button(page: Page, patterns: list[str], failure_message: str):
     for pattern in patterns:
         try:
@@ -424,34 +491,37 @@ def click_first_matching_button(page: Page, patterns: list[str], failure_message
 
 
 def create_suricata_rule_in_ui(page: Page, rule: dict):
-    log(f"Creating detection in UI for {rule['name']}")
+    log(f"Creating Suricata detection in UI for {rule['name']}")
     open_create_detection_dialog(page)
     fill_suricata_detection_form(page, rule)
     click_first_matching_button(page, [r"^Create$"], "Could not click Create button")
 
-    # Give the UI time to process submission
     page.wait_for_timeout(LONG_WAIT_MS)
-
-    # If still on the create screen, navigate back to detections explicitly
-    try:
-        if "#/detection/create" in page.url:
-            log("Still on create page after clicking CREATE; navigating to detections explicitly")
-    except Exception:
-        pass
-
     go_to_detections(page)
     page.wait_for_timeout(LONG_WAIT_MS)
     print(f"[PASS] Submitted create flow for {rule['name']}")
 
 
-def verify_suricata_rule_present_in_ui(page: Page, rule: dict):
-    search_for_rule(page, rule.get("msg") or rule["name"])
+def create_sigma_rule_in_ui(page: Page, rule: dict):
+    log(f"Creating Sigma detection in UI for {rule['name']}")
+    open_create_detection_dialog(page)
+    fill_sigma_detection_form(page, rule)
+    click_first_matching_button(page, [r"^Create$"], "Could not click Create button")
+
+    page.wait_for_timeout(LONG_WAIT_MS)
+    go_to_detections(page)
+    page.wait_for_timeout(LONG_WAIT_MS)
+    print(f"[PASS] Submitted create flow for {rule['name']}")
+
+
+def verify_rule_present_in_ui(page: Page, rule: dict):
+    search_for_rule(page, rule.get("lookup") or rule["name"])
     page.reload(wait_until="networkidle")
     page.wait_for_timeout(LONG_WAIT_MS)
 
     if not find_rule_in_ui(page, rule):
         write_debug_html(page, "so_debug_verify_present_failure.html")
-        print_page_debug(page, f"verify present failure for {rule.get('msg') or rule['name']}")
+        print_page_debug(page, f"verify present failure for {rule.get('lookup') or rule['name']}")
         fail(f"Rule was not found in UI after deployment: {rule['name']}")
 
     go_to_detections(page)
@@ -484,7 +554,9 @@ def validate_suricata_sids(repo_state: dict, saved_state: dict):
 
     repo_dupes = {sid: names for sid, names in repo_sid_to_names.items() if len(names) > 1}
     if repo_dupes:
-        details = "; ".join(f"sid:{sid} -> {', '.join(names)}" for sid, names in sorted(repo_dupes.items()))
+        details = "; ".join(
+            f"sid:{sid} -> {', '.join(names)}" for sid, names in sorted(repo_dupes.items())
+        )
         fail(f"Duplicate Suricata SID(s) found in repo: {details}")
 
     collisions = []
@@ -503,10 +575,10 @@ def validate_suricata_sids(repo_state: dict, saved_state: dict):
         fail("Suricata SID collision(s) found between repo and state: " + "; ".join(collisions))
 
 
-def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
+def verify_rule_absent_in_ui(context: BrowserContext, rule: dict):
     temp_page = open_detections_in_fresh_tab(context)
     try:
-        search_for_rule(temp_page, rule.get("msg") or rule["name"])
+        search_for_rule(temp_page, rule.get("lookup") or rule["name"])
         temp_page.reload(wait_until="networkidle")
         temp_page.wait_for_timeout(LONG_WAIT_MS)
 
@@ -516,7 +588,7 @@ def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
             return
 
         write_debug_html(temp_page, "so_debug_verify_absent_failure.html")
-        print_page_debug(temp_page, f"verify absent failure for {rule.get('msg') or rule['name']}")
+        print_page_debug(temp_page, f"verify absent failure for {rule.get('lookup') or rule['name']}")
     finally:
         temp_page.close()
 
@@ -524,7 +596,7 @@ def verify_suricata_rule_absent_in_ui(context: BrowserContext, rule: dict):
 
 
 def select_filtered_results_checkbox(page: Page, rule: dict) -> bool:
-    lookup = rule.get("msg") or rule["name"]
+    lookup = rule.get("lookup") or rule["name"]
     search_for_rule(page, lookup)
 
     checkbox_targets = [
@@ -590,7 +662,10 @@ def choose_bulk_action_delete(page: Page):
                                 continue
                             combo.click(force=True, timeout=3000)
                             page.wait_for_timeout(SHORT_WAIT_MS)
-                            page.get_by_role("option", name=re.compile(r"^Delete$", re.I)).click(force=True, timeout=3000)
+                            page.get_by_role("option", name=re.compile(r"^Delete$", re.I)).click(
+                                force=True,
+                                timeout=3000,
+                            )
                             page.wait_for_timeout(MEDIUM_WAIT_MS)
                             log("Set Bulk Action to Delete")
                             return
@@ -678,7 +753,7 @@ def confirm_delete_popup(page: Page):
     fail('Could not click "YES" on delete confirmation popup')
 
 
-def delete_suricata_rule_in_ui(page: Page, rule: dict):
+def delete_rule_in_ui(page: Page, rule: dict):
     log(f"Deleting detection in UI for {rule['name']}")
 
     if not select_filtered_results_checkbox(page, rule):
@@ -734,53 +809,83 @@ def differential_update_suricata(context: BrowserContext):
 
 
 def apply_single_change(page: Page, context: BrowserContext, change: dict, saved_state: dict):
-    if change["engine"] == "zeek":
-        fail(
-            "Zeek state tracking is supported, but Zeek UI deployment logic has not "
-            "been implemented yet. This run contains a Zeek rule change."
-        )
+    if change["engine"] == "suricata":
+        old_rule = None
+        if change["old_content"]:
+            old_rule = parse_suricata_rule(change["name"], change["old_content"])
 
-    if change["engine"] != "suricata":
-        fail(f"Unsupported detection engine: {change['engine']}")
+        new_rule = None
+        if change["new_content"]:
+            new_rule = parse_suricata_rule(change["name"], change["new_content"])
 
-    old_rule = None
-    if change["old_content"]:
-        old_rule = parse_suricata_rule(change["name"], change["old_content"])
+        if change["action"] == "create":
+            create_suricata_rule_in_ui(page, new_rule)
+            differential_update_suricata(context)
+            verify_rule_present_in_ui(page, new_rule)
+            saved_state["suricata"][change["name"]] = new_rule["content"]
+            save_state(saved_state)
+            return
 
-    new_rule = None
-    if change["new_content"]:
-        new_rule = parse_suricata_rule(change["name"], change["new_content"])
+        if change["action"] == "delete":
+            delete_rule_in_ui(page, old_rule)
+            differential_update_suricata(context)
+            verify_rule_absent_in_ui(context, old_rule)
+            saved_state["suricata"].pop(change["name"], None)
+            save_state(saved_state)
+            return
 
-    if change["action"] == "create":
-        create_suricata_rule_in_ui(page, new_rule)
-        differential_update_suricata(context)
-        verify_suricata_rule_present_in_ui(page, new_rule)
-        saved_state["suricata"][change["name"]] = new_rule["content"]
-        save_state(saved_state)
-        return
+        if change["action"] == "update":
+            delete_rule_in_ui(page, old_rule)
+            differential_update_suricata(context)
+            verify_rule_absent_in_ui(context, old_rule)
 
-    if change["action"] == "delete":
-        delete_suricata_rule_in_ui(page, old_rule)
-        differential_update_suricata(context)
-        verify_suricata_rule_absent_in_ui(context, old_rule)
-        saved_state["suricata"].pop(change["name"], None)
-        save_state(saved_state)
-        return
+            create_suricata_rule_in_ui(page, new_rule)
+            differential_update_suricata(context)
+            verify_rule_present_in_ui(page, new_rule)
 
-    if change["action"] == "update":
-        delete_suricata_rule_in_ui(page, old_rule)
-        differential_update_suricata(context)
-        verify_suricata_rule_absent_in_ui(context, old_rule)
+            saved_state["suricata"][change["name"]] = new_rule["content"]
+            save_state(saved_state)
+            return
 
-        create_suricata_rule_in_ui(page, new_rule)
-        differential_update_suricata(context)
-        verify_suricata_rule_present_in_ui(page, new_rule)
+        fail(f"Unsupported change action: {change['action']}")
 
-        saved_state["suricata"][change["name"]] = new_rule["content"]
-        save_state(saved_state)
-        return
+    if change["engine"] == "sigma":
+        old_rule = None
+        if change["old_content"]:
+            old_rule = parse_sigma_rule(change["name"], change["old_content"])
 
-    fail(f"Unsupported change action: {change['action']}")
+        new_rule = None
+        if change["new_content"]:
+            new_rule = parse_sigma_rule(change["name"], change["new_content"])
+
+        if change["action"] == "create":
+            create_sigma_rule_in_ui(page, new_rule)
+            verify_rule_present_in_ui(page, new_rule)
+            saved_state["sigma"][change["name"]] = new_rule["content"]
+            save_state(saved_state)
+            return
+
+        if change["action"] == "delete":
+            delete_rule_in_ui(page, old_rule)
+            verify_rule_absent_in_ui(context, old_rule)
+            saved_state["sigma"].pop(change["name"], None)
+            save_state(saved_state)
+            return
+
+        if change["action"] == "update":
+            delete_rule_in_ui(page, old_rule)
+            verify_rule_absent_in_ui(context, old_rule)
+
+            create_sigma_rule_in_ui(page, new_rule)
+            verify_rule_present_in_ui(page, new_rule)
+
+            saved_state["sigma"][change["name"]] = new_rule["content"]
+            save_state(saved_state)
+            return
+
+        fail(f"Unsupported change action: {change['action']}")
+
+    fail(f"Unsupported detection engine: {change['engine']}")
 
 
 def main():
@@ -794,8 +899,8 @@ def main():
 
     log(f"Repo suricata rules: {sorted(repo_state['suricata'].keys())}")
     log(f"State suricata rules: {sorted(saved_state['suricata'].keys())}")
-    log(f"Repo zeek rules: {sorted(repo_state['zeek'].keys())}")
-    log(f"State zeek rules: {sorted(saved_state['zeek'].keys())}")
+    log(f"Repo sigma rules: {sorted(repo_state['sigma'].keys())}")
+    log(f"State sigma rules: {sorted(saved_state['sigma'].keys())}")
     log(
         "Computed Security Onion repo/state changes: "
         + (

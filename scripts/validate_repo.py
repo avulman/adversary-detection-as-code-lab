@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SPLUNK_DIR = ROOT / "detections" / "splunk" / "mitre-att&ck"
 SO_BASE_DIR = ROOT / "detections" / "security-onion"
 SO_SURICATA_DIR = SO_BASE_DIR / "suricata"
-SO_ZEEK_DIR = SO_BASE_DIR / "zeek"
+SO_SIGMA_DIR = SO_BASE_DIR / "sigma"
 
 VALIDATIONS_DIR = ROOT / "validations"
 SCENARIOS_DIR = VALIDATIONS_DIR / "scenarios"
@@ -17,7 +17,7 @@ MATRIX_FILE = VALIDATIONS_DIR / "detection-validation-matrix.md"
 STATE_DIR = ROOT / "state"
 STATE_FILE = STATE_DIR / "securityonion_rule_state.json"
 
-ALLOWED_STATE_ENGINES = {"suricata", "zeek"}
+ALLOWED_STATE_ENGINES = {"suricata", "sigma"}
 
 
 def fail(msg: str):
@@ -35,7 +35,7 @@ def normalize_rule_content(content: str) -> str:
 
 def load_state() -> dict:
     if not STATE_FILE.exists():
-        return {"suricata": {}, "zeek": {}}
+        return {"suricata": {}, "sigma": {}}
 
     if not STATE_FILE.is_file():
         fail(
@@ -52,6 +52,10 @@ def load_state() -> dict:
 
     if not isinstance(raw, dict):
         fail("State file must contain a top-level JSON object")
+
+    # Allow legacy zeek state to exist and drop it.
+    if "zeek" in raw:
+        raw.pop("zeek", None)
 
     for engine in ALLOWED_STATE_ENGINES:
         raw.setdefault(engine, {})
@@ -156,10 +160,39 @@ def validate_splunk_detections():
             print(f"[WARN] {spl_file.name} may not include MITRE ATT&CK reference")
 
 
+def extract_sid(content: str) -> str | None:
+    match = re.search(r"\bsid\s*:\s*(\d+)\b", content, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def validate_suricata_sids():
+    repo_rules = {}
+
+    for path in sorted(SO_SURICATA_DIR.glob("*.rules")):
+        content = path.read_text(encoding="utf-8", errors="ignore").strip()
+        if not content:
+            fail(f"{path.relative_to(ROOT)} is empty")
+        repo_rules[path.name] = content
+
+    sid_to_names = {}
+    for name, content in repo_rules.items():
+        sid = extract_sid(content)
+        if not sid:
+            fail(f"Suricata rule missing sid: {name}")
+        sid_to_names.setdefault(sid, []).append(name)
+
+    repo_dupes = {sid: names for sid, names in sid_to_names.items() if len(names) > 1}
+    if repo_dupes:
+        details = "; ".join(
+            f"sid:{sid} -> {', '.join(names)}" for sid, names in sorted(repo_dupes.items())
+        )
+        fail(f"Duplicate Suricata SID(s) found in repo: {details}")
+
+
 def collect_security_onion_repo_rules() -> dict:
     repo_state = {
         "suricata": {},
-        "zeek": {},
+        "sigma": {},
     }
 
     if SO_SURICATA_DIR.exists():
@@ -171,15 +204,16 @@ def collect_security_onion_repo_rules() -> dict:
                 fail(f"{path.relative_to(ROOT)} is empty")
             repo_state["suricata"][path.name] = normalize_rule_content(content)
 
-    if SO_ZEEK_DIR.exists():
-        if not SO_ZEEK_DIR.is_dir():
-            fail("detections/security-onion/zeek must be a directory")
-        for path in sorted(p for p in SO_ZEEK_DIR.rglob("*") if p.is_file()):
+    if SO_SIGMA_DIR.exists():
+        if not SO_SIGMA_DIR.is_dir():
+            fail("detections/security-onion/sigma must be a directory")
+        sigma_files = sorted(list(SO_SIGMA_DIR.rglob("*.yml")) + list(SO_SIGMA_DIR.rglob("*.yaml")))
+        for path in sigma_files:
             content = path.read_text(encoding="utf-8", errors="ignore").strip()
             if not content:
                 fail(f"{path.relative_to(ROOT)} is empty")
-            relative_name = path.relative_to(SO_ZEEK_DIR).as_posix()
-            repo_state["zeek"][relative_name] = normalize_rule_content(content)
+            relative_name = path.relative_to(SO_SIGMA_DIR).as_posix()
+            repo_state["sigma"][relative_name] = normalize_rule_content(content)
 
     return repo_state
 
@@ -227,41 +261,25 @@ def diff_security_onion_repo_vs_state(repo_state: dict, saved_state: dict) -> li
     return changes
 
 
-def collect_all_detection_stems() -> dict[str, str]:
-    detections: dict[str, str] = {}
-
-    for path in sorted(SPLUNK_DIR.glob("*.spl")):
-        detections[path.stem] = str(path.relative_to(ROOT))
-
-    for path in sorted(SO_SURICATA_DIR.glob("*.rules")):
-        detections[path.stem] = str(path.relative_to(ROOT))
-
-    if SO_ZEEK_DIR.exists():
-        for path in sorted(p for p in SO_ZEEK_DIR.rglob("*") if p.is_file()):
-            detections[path.stem] = str(path.relative_to(ROOT))
-
-    return detections
-
-
-def collect_scenario_stems() -> set[str]:
-    stems = set()
-    for path in sorted(SCENARIOS_DIR.glob("*.md")):
-        if path.name == "_scenarios_template.md":
-            continue
-        stems.add(path.stem)
-    return stems
-
-
 def extract_technique_from_stem(stem: str) -> str | None:
-    """
-    Converts a detection/scenario stem like:
-      t1003.001_lsass_access -> T1003.001
-      t1046_nmap_syn_scan -> T1046
-    """
     match = re.match(r"^(t\d{4}(?:\.\d{3})?)", stem, re.IGNORECASE)
     if not match:
         return None
     return match.group(1).upper()
+
+
+def extract_sigma_technique_from_tags(path: Path) -> str | None:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+
+    dotted = re.search(r"(?im)^\s*-\s*attack\.t(\d{4}\.\d{3})\s*$", text)
+    if dotted:
+        return f"T{dotted.group(1)}"
+
+    simple = re.search(r"(?im)^\s*-\s*attack\.t(\d{4})\s*$", text)
+    if simple:
+        return f"T{simple.group(1)}"
+
+    return None
 
 
 def collect_all_detection_info() -> list[dict]:
@@ -292,12 +310,13 @@ def collect_all_detection_info() -> list[dict]:
             }
         )
 
-    if SO_ZEEK_DIR.exists():
-        for path in sorted(p for p in SO_ZEEK_DIR.rglob("*") if p.is_file()):
-            technique = extract_technique_from_stem(path.stem)
+    if SO_SIGMA_DIR.exists():
+        sigma_files = sorted(list(SO_SIGMA_DIR.rglob("*.yml")) + list(SO_SIGMA_DIR.rglob("*.yaml")))
+        for path in sigma_files:
+            technique = extract_sigma_technique_from_tags(path) or extract_technique_from_stem(path.stem)
             if not technique:
                 fail(
-                    f"Could not derive MITRE technique from Zeek filename: "
+                    f"Could not derive MITRE technique from Sigma file: "
                     f"{path.relative_to(ROOT)}"
                 )
             detections.append(
@@ -311,13 +330,22 @@ def collect_all_detection_info() -> list[dict]:
     return detections
 
 
+def collect_scenario_stems() -> set[str]:
+    stems = set()
+    for path in sorted(SCENARIOS_DIR.glob("*.md")):
+        if path.name == "_scenarios_template.md":
+            continue
+        stems.add(path.stem)
+    return stems
+
+
 def validate_detection_scenarios_and_matrix():
     detections = collect_all_detection_info()
     scenarios = collect_scenario_stems()
     matrix_text = MATRIX_FILE.read_text(encoding="utf-8", errors="ignore")
 
     if not detections:
-        fail("No detection files found across Splunk, Suricata, or Zeek")
+        fail("No detection files found across Splunk, Suricata, or Sigma")
 
     missing_scenarios = []
     missing_matrix_entries = []
@@ -358,8 +386,8 @@ def validate_single_security_onion_change():
 
     log(f"Repo suricata rules: {sorted(repo_state['suricata'].keys())}")
     log(f"State suricata rules: {sorted(saved_state['suricata'].keys())}")
-    log(f"Repo zeek rules: {sorted(repo_state['zeek'].keys())}")
-    log(f"State zeek rules: {sorted(saved_state['zeek'].keys())}")
+    log(f"Repo sigma rules: {sorted(repo_state['sigma'].keys())}")
+    log(f"State sigma rules: {sorted(saved_state['sigma'].keys())}")
 
     changes = diff_security_onion_repo_vs_state(repo_state, saved_state)
 
@@ -394,6 +422,7 @@ def validate_single_security_onion_change():
 def main():
     validate_required_paths()
     validate_splunk_detections()
+    validate_suricata_sids()
     validate_detection_scenarios_and_matrix()
     validate_single_security_onion_change()
     print("[PASS] Repository validation succeeded")
