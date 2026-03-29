@@ -69,6 +69,22 @@ def load_test_config(rule_stem: str) -> dict:
         fail(f"Invalid JSON in {config_path.relative_to(ROOT)}: {e}")
 
 
+def normalize_fixture_event(raw_event: dict) -> dict:
+    """
+    Support either:
+      { ...fields... }
+    or:
+      { "preview": true, "result": { ...fields... } }
+    """
+    if not isinstance(raw_event, dict):
+        fail("Fixture event must be a JSON object")
+
+    if "result" in raw_event and isinstance(raw_event["result"], dict):
+        return raw_event["result"]
+
+    return raw_event
+
+
 def read_positive_fixture_events(rule_stem: str) -> list[dict]:
     fixture_dir = TESTS_DIR / rule_stem / "positive"
     if not fixture_dir.exists():
@@ -77,7 +93,8 @@ def read_positive_fixture_events(rule_stem: str) -> list[dict]:
     events = []
     for path in sorted(fixture_dir.glob("*.json")):
         try:
-            events.append(json.loads(path.read_text(encoding="utf-8")))
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            events.append(normalize_fixture_event(raw))
         except Exception as e:
             fail(f"Invalid fixture JSON in {path.relative_to(ROOT)}: {e}")
 
@@ -109,7 +126,7 @@ def remove_index_terms(expr: str) -> str:
 
 def normalize_expression(expr: str) -> str:
     """
-    Fix a few common issues and normalize spacing.
+    Normalize spacing and fix a few common repo-side quirks.
     """
     expr = expr.replace("\n", " ").replace("\r", " ")
     expr = expr.replace("!=", " != ")
@@ -144,18 +161,24 @@ def tokenize(expr: str) -> list[str]:
 
         if ch == '"':
             j = i + 1
+            value = ['"']
             escaped = False
-            value = '"'
+
             while j < n:
                 c = expr[j]
-                value += c
+                value.append(c)
+
                 if c == '"' and not escaped:
                     break
-                escaped = (c == "\\" and not escaped)
-                if c != "\\":
+
+                if c == "\\" and not escaped:
+                    escaped = True
+                else:
                     escaped = False
+
                 j += 1
-            tokens.append(value)
+
+            tokens.append("".join(value))
             i = j + 1
             continue
 
@@ -168,10 +191,55 @@ def tokenize(expr: str) -> list[str]:
     return tokens
 
 
+def insert_implicit_ands(tokens: list[str]) -> list[str]:
+    """
+    Splunk base searches often imply AND by adjacency:
+      EventCode=1 Image="*powershell.exe"
+    becomes:
+      EventCode=1 AND Image="*powershell.exe"
+    """
+    result = []
+
+    def is_operand_end(tok: str) -> bool:
+        return tok not in {"AND", "OR", "(", ")"}
+
+    def starts_operand(tok: str) -> bool:
+        return tok not in {"AND", "OR", ")"}
+
+    for i, token in enumerate(tokens):
+        result.append(token)
+
+        if i == len(tokens) - 1:
+            continue
+
+        current = token
+        nxt = tokens[i + 1]
+
+        if (is_operand_end(current) or current == ")") and (starts_operand(nxt) or nxt == "("):
+            # Avoid inserting AND after explicit boolean operators or before explicit closers.
+            if current not in {"AND", "OR", "("} and nxt not in {"AND", "OR", ")"}:
+                result.append("AND")
+
+    return result
+
+
 def strip_quotes(value: str) -> str:
     value = value.strip()
     if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
         return value[1:-1]
+    return value
+
+
+def extract_event_value(event: dict, field: str):
+    value = event.get(field)
+
+    # Some exported Splunk fields can come back as arrays; use the last non-empty item.
+    if isinstance(value, list):
+        non_empty = [str(v) for v in value if str(v).strip()]
+        if non_empty:
+            return non_empty[-1]
+        return ""
+
     return value
 
 
@@ -181,7 +249,7 @@ def wildcard_match(actual: object, pattern: str) -> bool:
 
 
 def compare_field(event: dict, field: str, operator: str, value: str) -> bool:
-    actual = event.get(field)
+    actual = extract_event_value(event, field)
     expected = strip_quotes(value)
 
     if operator == "=":
@@ -206,7 +274,6 @@ def parse_primary(tokens: list[str], pos: int):
             fail("Missing closing parenthesis in search expression")
         return node, pos + 1
 
-    # Expect field operator value
     if pos + 2 >= len(tokens):
         fail(f"Incomplete comparison near token '{token}'")
 
@@ -266,6 +333,8 @@ def event_matches_base_search(event: dict, base_search: str) -> bool:
         return True
 
     tokens = tokenize(expr)
+    tokens = insert_implicit_ands(tokens)
+
     ast, pos = parse_or(tokens, 0)
 
     if pos != len(tokens):
