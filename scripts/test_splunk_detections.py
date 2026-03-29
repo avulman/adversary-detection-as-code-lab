@@ -191,33 +191,72 @@ def tokenize(expr: str) -> list[str]:
     return tokens
 
 
+def is_boolean_token(token: str) -> bool:
+    return token.upper() in {"AND", "OR"}
+
+
+def is_operator_token(token: str) -> bool:
+    return token in {"=", "!="}
+
+
+def starts_comparison(tokens: list[str], index: int) -> bool:
+    """
+    A comparison starts at position i if tokens[i:i+3] look like:
+      field operator value
+    """
+    if index + 2 >= len(tokens):
+        return False
+
+    field = tokens[index]
+    operator = tokens[index + 1]
+    value = tokens[index + 2]
+
+    if field in {"(", ")"} or is_boolean_token(field) or is_operator_token(field):
+        return False
+
+    if not is_operator_token(operator):
+        return False
+
+    if value in {"(", ")"} or is_boolean_token(value):
+        return False
+
+    return True
+
+
 def insert_implicit_ands(tokens: list[str]) -> list[str]:
     """
     Splunk base searches often imply AND by adjacency:
       EventCode=1 Image="*powershell.exe"
     becomes:
       EventCode=1 AND Image="*powershell.exe"
+
+    We only insert AND:
+    - after a complete comparison when another comparison starts next
+    - after a closing ')' when another comparison starts next
+    - after a complete comparison when '(' starts next
+    - after a closing ')' when '(' starts next
     """
     result = []
+    i = 0
 
-    def is_operand_end(tok: str) -> bool:
-        return tok not in {"AND", "OR", "(", ")"}
+    while i < len(tokens):
+        # Copy complete comparison as a unit: field op value
+        if starts_comparison(tokens, i):
+            result.extend(tokens[i:i + 3])
+            i += 3
 
-    def starts_operand(tok: str) -> bool:
-        return tok not in {"AND", "OR", ")"}
-
-    for i, token in enumerate(tokens):
-        result.append(token)
-
-        if i == len(tokens) - 1:
+            if i < len(tokens):
+                if tokens[i] == "(" or starts_comparison(tokens, i):
+                    result.append("AND")
             continue
 
-        current = token
-        nxt = tokens[i + 1]
+        # Copy parenthesis
+        token = tokens[i]
+        result.append(token)
+        i += 1
 
-        if (is_operand_end(current) or current == ")") and (starts_operand(nxt) or nxt == "("):
-            # Avoid inserting AND after explicit boolean operators or before explicit closers.
-            if current not in {"AND", "OR", "("} and nxt not in {"AND", "OR", ")"}:
+        if token == ")" and i < len(tokens):
+            if tokens[i] == "(" or starts_comparison(tokens, i):
                 result.append("AND")
 
     return result
@@ -281,7 +320,7 @@ def parse_primary(tokens: list[str], pos: int):
     operator = tokens[pos + 1]
     value = tokens[pos + 2]
 
-    if operator not in ("=", "!="):
+    if not is_operator_token(operator):
         fail(f"Unsupported operator '{operator}' in local SPL evaluator")
 
     node = ("cmp", field, operator, value)
