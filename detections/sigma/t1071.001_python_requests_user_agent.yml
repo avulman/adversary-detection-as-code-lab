@@ -1,0 +1,24 @@
+title: Suspicious Python Requests User-Agent in Zeek HTTP
+id: 0a1f7d24-f6a1-4aa7-a5ce-7cf1a6a1c101
+status: experimental
+description: Detects HTTP requests in Zeek logs where the client user agent contains python-requests.
+author: Anton Vulman
+date: 2026-03-29
+references:
+  - https://attack.mitre.org/techniques/T1071/001/
+logsource:
+  product: zeek
+  service: http
+detection:
+  selection_dataset:
+    event.dataset: zeek.http
+  selection_ua:
+    user_agent|contains: python-requests
+  condition: selection_dataset and selection_ua
+falsepositives:
+  - Internal automation scripts
+  - Administrative tooling using Python requests
+level: medium
+tags:
+  - attack.command-and-control
+  - attack.t1071.001
