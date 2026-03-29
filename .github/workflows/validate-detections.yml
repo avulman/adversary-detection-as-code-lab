@@ -7,7 +7,7 @@ on:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, x64]
 
     steps:
       - name: Checkout repository
@@ -18,5 +18,15 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install Python dependencies
+        run: py -m pip install pyyaml requests
+
       - name: Run repository validation
-        run: python scripts/validate_repo.py
+        run: py scripts\validate_repo.py
+
+      - name: Run detection syntax validation
+        env:
+          SPLUNK_BASE_URL: ${{ secrets.SPLUNK_BASE_URL }}
+          SPLUNK_USERNAME: ${{ secrets.SPLUNK_USERNAME }}
+          SPLUNK_PASSWORD: ${{ secrets.SPLUNK_PASSWORD }}
+        run: py scripts\validate_detection_syntax.py
