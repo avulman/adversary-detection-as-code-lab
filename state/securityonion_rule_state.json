@@ -1,5 +1,7 @@
 {
-  "sigma": {}, 
+  "sigma": {
+    "t1021.001_rdp_connection_zeek_conn.yml": "title: Remote Desktop Protocol Connection in Zeek Conn\nid: 5e6f4f79-9df9-4ec2-bcae-b2h7d3f8a606\nstatus: experimental\ndescription: Detects network connections to TCP port 3389 in Zeek conn logs, which may indicate Remote Desktop Protocol activity.\nauthor: Anton Vulman\ndate: 2026-03-29\nreferences:\n  - https://attack.mitre.org/techniques/T1021/001/\nlogsource:\n  product: zeek\n  service: conn\ndetection:\n  selection_dataset:\n    event.dataset: zeek.conn\n  selection_port:\n    destination.port: 3389\n  selection_proto:\n    network.transport: tcp\n  condition: selection_dataset and selection_port and selection_proto\nfalsepositives:\n  - Legitimate administrative RDP activity\n  - Help desk or system administration access\nlevel: medium\ntags:\n  - attack.lateral-movement\n  - attack.t1021.001"
+  },
   "suricata": {
     "t1046_icmp_ping.rules": "alert icmp any any -> any any (msg:\"T1046 ICMP Ping Detected\"; itype:8; sid:1000002; rev:1;)",
     "t1046_nmap_syn_scan.rules": "alert tcp any any -> $HOME_NET any (msg:\"T1046 Nmap SYN Scan Detected\"; flags:S; flow:stateless; threshold:type both, track by_src, count 20, seconds 10; classtype:attempted-recon; sid:1000001; rev:1;)",
