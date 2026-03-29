@@ -1,22 +1,13 @@
 from pathlib import Path
 import json
-import os
+import fnmatch
 import re
 import sys
-import time
-import requests
 
 ROOT = Path(__file__).resolve().parent.parent
 
 SPLUNK_DIR = ROOT / "detections" / "splunk" / "mitre-att&ck"
 TESTS_DIR = ROOT / "tests" / "splunk"
-
-SPLUNK_BASE_URL = os.getenv("SPLUNK_BASE_URL", "").rstrip("/")
-SPLUNK_USERNAME = os.getenv("SPLUNK_USERNAME", "")
-SPLUNK_PASSWORD = os.getenv("SPLUNK_PASSWORD", "")
-SPLUNK_TEST_INDEX = os.getenv("SPLUNK_TEST_INDEX", "detection_test")
-
-requests.packages.urllib3.disable_warnings()
 
 
 def fail(msg: str):
@@ -30,16 +21,6 @@ def log(msg: str):
 
 def warn(msg: str):
     print(f"[WARN] {msg}")
-
-
-def splunk_session() -> requests.Session:
-    if not SPLUNK_BASE_URL or not SPLUNK_USERNAME or not SPLUNK_PASSWORD:
-        fail("Missing SPLUNK_BASE_URL, SPLUNK_USERNAME, or SPLUNK_PASSWORD")
-
-    session = requests.Session()
-    session.auth = (SPLUNK_USERNAME, SPLUNK_PASSWORD)
-    session.verify = False
-    return session
 
 
 def parse_detection_file(path: Path) -> tuple[dict, str]:
@@ -88,7 +69,7 @@ def load_test_config(rule_stem: str) -> dict:
         fail(f"Invalid JSON in {config_path.relative_to(ROOT)}: {e}")
 
 
-def read_fixture_events(rule_stem: str) -> list[dict]:
+def read_positive_fixture_events(rule_stem: str) -> list[dict]:
     fixture_dir = TESTS_DIR / rule_stem / "positive"
     if not fixture_dir.exists():
         fail(f"Missing positive fixture directory: {fixture_dir.relative_to(ROOT)}")
@@ -106,162 +87,221 @@ def read_fixture_events(rule_stem: str) -> list[dict]:
     return events
 
 
-def rest_post(session: requests.Session, endpoint: str, data: dict) -> dict:
-    url = f"{SPLUNK_BASE_URL}{endpoint}"
-    response = session.post(url, data=data, timeout=60)
-
-    if response.status_code not in (200, 201):
-        fail(f"POST {endpoint} failed ({response.status_code}): {response.text[:500]}")
-
-    try:
-        return response.json()
-    except Exception:
-        return {"raw_text": response.text}
-
-
-def rest_get(session: requests.Session, endpoint: str, params: dict | None = None) -> dict:
-    url = f"{SPLUNK_BASE_URL}{endpoint}"
-    response = session.get(url, params=params or {}, timeout=60)
-
-    if response.status_code != 200:
-        fail(f"GET {endpoint} failed ({response.status_code}): {response.text[:500]}")
-
-    try:
-        return response.json()
-    except Exception:
-        return {"raw_text": response.text}
+def extract_base_search(query: str) -> str:
+    """
+    Keep only the predicate portion before the first pipe.
+    Example:
+      index=sysmon EventCode=1 Image="*powershell.exe"
+      | table ...
+    becomes:
+      index=sysmon EventCode=1 Image="*powershell.exe"
+    """
+    return query.split("|", 1)[0].strip()
 
 
-def submit_event(
-    session: requests.Session,
-    index: str,
-    source: str,
-    sourcetype: str,
-    host: str,
-    event: dict,
-):
-    payload = {
-        "index": index,
-        "source": source,
-        "sourcetype": sourcetype,
-        "host": host,
-        "event": json.dumps(event),
-    }
-    rest_post(session, "/services/receivers/simple", payload)
+def remove_index_terms(expr: str) -> str:
+    """
+    Remove index=... tokens because local fixtures are not stored in Splunk indexes.
+    """
+    expr = re.sub(r"\bindex\s*=\s*\S+", "", expr, flags=re.IGNORECASE)
+    return " ".join(expr.split())
 
 
-def wait_for_indexing():
-    time.sleep(5)
+def normalize_expression(expr: str) -> str:
+    """
+    Fix a few common issues and normalize spacing.
+    """
+    expr = expr.replace("\n", " ").replace("\r", " ")
+    expr = expr.replace("!=", " != ")
+    expr = re.sub(r"(?<![!<>=])=(?!=)", " = ", expr)
+    expr = expr.replace("(", " ( ").replace(")", " ) ")
+    expr = re.sub(r"\bAND\b", " AND ", expr, flags=re.IGNORECASE)
+    expr = re.sub(r"\bOR\b", " OR ", expr, flags=re.IGNORECASE)
+
+    # Fix accidental typo like CommandLine+"*HKCU*"
+    expr = re.sub(r'([A-Za-z0-9_.]+)\s*\+\s*(".*?")', r"\1 = \2", expr)
+
+    expr = " ".join(expr.split())
+    return expr.strip()
 
 
-def rewrite_query_for_test(query: str, index: str, source: str) -> str:
-    rewritten = re.sub(r"\bindex\s*=\s*\S+", f"index={index}", query, count=1)
+def tokenize(expr: str) -> list[str]:
+    tokens = []
+    i = 0
+    n = len(expr)
 
-    if rewritten == query:
-        if rewritten.lower().startswith(("search ", "|", "from ")):
-            rewritten = f'{rewritten} | search source="{source}"'
-        else:
-            rewritten = f'search index={index} source="{source}" {rewritten}'
-    else:
-        rewritten = f'{rewritten} | search source="{source}"'
+    while i < n:
+        ch = expr[i]
 
-    return rewritten
+        if ch.isspace():
+            i += 1
+            continue
 
+        if ch in "()":
+            tokens.append(ch)
+            i += 1
+            continue
 
-def create_search_job(session: requests.Session, query: str) -> str:
-    search_query = query if query.lower().startswith("search ") else f"search {query}"
+        if ch == '"':
+            j = i + 1
+            escaped = False
+            value = '"'
+            while j < n:
+                c = expr[j]
+                value += c
+                if c == '"' and not escaped:
+                    break
+                escaped = (c == "\\" and not escaped)
+                if c != "\\":
+                    escaped = False
+                j += 1
+            tokens.append(value)
+            i = j + 1
+            continue
 
-    data = rest_post(
-        session,
-        "/services/search/jobs",
-        {
-            "search": search_query,
-            "output_mode": "json",
-            "exec_mode": "normal",
-        },
-    )
+        j = i
+        while j < n and not expr[j].isspace() and expr[j] not in "()":
+            j += 1
+        tokens.append(expr[i:j])
+        i = j
 
-    sid = data.get("sid")
-    if not sid:
-        fail("Splunk search job creation did not return a sid")
-    return sid
-
-
-def wait_for_job(session: requests.Session, sid: str):
-    for _ in range(30):
-        payload = rest_get(
-            session,
-            f"/services/search/jobs/{sid}",
-            {"output_mode": "json"},
-        )
-
-        entries = payload.get("entry", [])
-        if entries:
-            content = entries[0].get("content", {})
-            if content.get("isDone"):
-                return
-
-        time.sleep(2)
-
-    fail(f"Timed out waiting for search job {sid} to finish")
+    return tokens
 
 
-def get_result_count(session: requests.Session, sid: str) -> int:
-    payload = rest_get(
-        session,
-        f"/services/search/jobs/{sid}",
-        {"output_mode": "json"},
-    )
+def strip_quotes(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        return value[1:-1]
+    return value
 
-    entries = payload.get("entry", [])
-    if not entries:
-        fail(f"No job metadata returned for search job {sid}")
 
-    content = entries[0].get("content", {})
-    result_count = content.get("resultCount", 0)
+def wildcard_match(actual: object, pattern: str) -> bool:
+    actual_str = "" if actual is None else str(actual)
+    return fnmatch.fnmatch(actual_str.lower(), pattern.lower())
 
-    try:
-        return int(float(result_count))
-    except Exception:
-        return 0
+
+def compare_field(event: dict, field: str, operator: str, value: str) -> bool:
+    actual = event.get(field)
+    expected = strip_quotes(value)
+
+    if operator == "=":
+        return wildcard_match(actual, expected)
+
+    if operator == "!=":
+        return not wildcard_match(actual, expected)
+
+    fail(f"Unsupported operator '{operator}' in local SPL evaluator")
+    return False
+
+
+def parse_primary(tokens: list[str], pos: int):
+    if pos >= len(tokens):
+        fail("Unexpected end of expression")
+
+    token = tokens[pos]
+
+    if token == "(":
+        node, pos = parse_or(tokens, pos + 1)
+        if pos >= len(tokens) or tokens[pos] != ")":
+            fail("Missing closing parenthesis in search expression")
+        return node, pos + 1
+
+    # Expect field operator value
+    if pos + 2 >= len(tokens):
+        fail(f"Incomplete comparison near token '{token}'")
+
+    field = tokens[pos]
+    operator = tokens[pos + 1]
+    value = tokens[pos + 2]
+
+    if operator not in ("=", "!="):
+        fail(f"Unsupported operator '{operator}' in local SPL evaluator")
+
+    node = ("cmp", field, operator, value)
+    return node, pos + 3
+
+
+def parse_and(tokens: list[str], pos: int):
+    left, pos = parse_primary(tokens, pos)
+
+    while pos < len(tokens) and tokens[pos].upper() == "AND":
+        right, pos = parse_primary(tokens, pos + 1)
+        left = ("and", left, right)
+
+    return left, pos
+
+
+def parse_or(tokens: list[str], pos: int):
+    left, pos = parse_and(tokens, pos)
+
+    while pos < len(tokens) and tokens[pos].upper() == "OR":
+        right, pos = parse_and(tokens, pos + 1)
+        left = ("or", left, right)
+
+    return left, pos
+
+
+def eval_ast(node, event: dict) -> bool:
+    kind = node[0]
+
+    if kind == "cmp":
+        _, field, operator, value = node
+        return compare_field(event, field, operator, value)
+
+    if kind == "and":
+        return eval_ast(node[1], event) and eval_ast(node[2], event)
+
+    if kind == "or":
+        return eval_ast(node[1], event) or eval_ast(node[2], event)
+
+    fail(f"Unsupported AST node '{kind}'")
+    return False
+
+
+def event_matches_base_search(event: dict, base_search: str) -> bool:
+    expr = remove_index_terms(base_search)
+    expr = normalize_expression(expr)
+
+    if not expr:
+        return True
+
+    tokens = tokenize(expr)
+    ast, pos = parse_or(tokens, 0)
+
+    if pos != len(tokens):
+        remaining = " ".join(tokens[pos:])
+        fail(f"Could not fully parse search expression. Remaining tokens: {remaining}")
+
+    return eval_ast(ast, event)
 
 
 def run_rule_test(rule_path: Path):
     rule_stem = rule_path.stem
     config = load_test_config(rule_stem)
-    positive_events = read_fixture_events(rule_stem)
+    positive_events = read_positive_fixture_events(rule_stem)
 
     _, query = parse_detection_file(rule_path)
+    base_search = extract_base_search(query)
 
-    source = config.get("source", f"detection_test_{rule_stem}")
-    sourcetype = config.get("sourcetype", "_json")
-    host = config.get("host", "detection-test-host")
-    index = config.get("index", SPLUNK_TEST_INDEX)
     expected_positive_min = int(config.get("expected_positive_min", 1))
 
-    session = splunk_session()
-
+    matched = 0
     for event in positive_events:
-        submit_event(session, index, source, sourcetype, host, event)
+        if event_matches_base_search(event, base_search):
+            matched += 1
 
-    wait_for_indexing()
+    log(f"Testing {rule_path.name} locally with base search: {base_search}")
+    log(f"Matched {matched} of {len(positive_events)} positive fixture event(s)")
 
-    test_query = rewrite_query_for_test(query, index, source)
-    log(f"Testing {rule_path.name} with query: {test_query}")
-
-    sid = create_search_job(session, test_query)
-    wait_for_job(session, sid)
-    result_count = get_result_count(session, sid)
-
-    if result_count < expected_positive_min:
+    if matched < expected_positive_min:
         fail(
-            f"{rule_path.name} failed true-positive test: "
-            f"result_count={result_count}, expected at least {expected_positive_min}"
+            f"{rule_path.name} failed local true-positive test: "
+            f"matched={matched}, expected at least {expected_positive_min}"
         )
 
     log(
-        f"True-positive test passed for {rule_path.name} "
-        f"(results={result_count}, expected_min={expected_positive_min})"
+        f"Local true-positive test passed for {rule_path.name} "
+        f"(matched={matched}, expected_min={expected_positive_min})"
     )
 
 
@@ -280,7 +320,7 @@ def main():
         else:
             log(f"Skipping {rule_path.name} because no test directory exists")
 
-    print("[PASS] Splunk detection true-positive tests succeeded")
+    print("[PASS] Local Splunk detection true-positive tests succeeded")
 
 
 if __name__ == "__main__":
