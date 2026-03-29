@@ -1,0 +1,27 @@
+title: SMB Connection in Zeek Conn
+id: 7a8b6b91-b1fb-4ae4-9ec4-d4j9f5a0c808
+status: experimental
+description: Detects network connections to TCP port 445 in Zeek conn logs, which may indicate SMB activity associated with remote access, file movement, or lateral movement.
+author: Anton Vulman
+date: 2026-03-29
+references:
+  - https://attack.mitre.org/techniques/T1133/
+logsource:
+  product: zeek
+  service: conn
+detection:
+  selection_dataset:
+    event.dataset: zeek.conn
+  selection_port:
+    destination.port: 445
+  selection_proto:
+    network.transport: tcp
+  condition: selection_dataset and selection_port and selection_proto
+falsepositives:
+  - Legitimate Windows file sharing
+  - Administrative SMB usage
+  - Domain and workstation communications
+level: medium
+tags:
+  - attack.initial-access
+  - attack.t1133
