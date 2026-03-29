@@ -401,19 +401,20 @@ def _select_language(page: Page, value_pattern: str):
     page.wait_for_timeout(MEDIUM_WAIT_MS)
 
 
-def fill_suricata_detection_form(page: Page, rule: dict):
+def fill_sigma_detection_form(page: Page, rule: dict):
     license_selectors = [
         '#detection-license-create',
         '#detection-license-edit',
     ]
-    signature_selectors = [
+    sigma_selectors = [
         '#detection-signature-create',
         '#detection-signature-edit',
         'textarea',
         '[data-aid*="signature"] textarea',
+        '[data-aid*="sigma"] textarea',
     ]
 
-    _select_language(page, r"^Suricata$")
+    _select_language(page, r"^Sigma$")
 
     license_box = None
     for selector in license_selectors:
@@ -424,27 +425,34 @@ def fill_suricata_detection_form(page: Page, rule: dict):
 
     if license_box is None:
         write_debug_html(page)
-        fail("Could not find License field")
+        fail("Could not find License field for Sigma rule")
 
     license_box.click(force=True)
     page.wait_for_timeout(SHORT_WAIT_MS)
     page.get_by_role("option", name=re.compile(r"GPL-2.0", re.I)).click()
     page.wait_for_timeout(MEDIUM_WAIT_MS)
 
-    for selector in signature_selectors:
+    for selector in sigma_selectors:
         try:
             locator = page.locator(selector).first
-            if locator.count() > 0:
-                locator.click(force=True)
-                page.wait_for_timeout(SHORT_WAIT_MS)
-                locator.fill(rule["content"])
-                page.wait_for_timeout(MEDIUM_WAIT_MS)
-                return
+            if locator.count() == 0:
+                continue
+
+            locator.click(force=True)
+            page.wait_for_timeout(SHORT_WAIT_MS)
+
+            # Clear any existing text before filling
+            locator.fill("")
+            page.wait_for_timeout(SHORT_WAIT_MS)
+
+            locator.fill(rule["content"])
+            page.wait_for_timeout(MEDIUM_WAIT_MS)
+            return
         except Exception:
             pass
 
     write_debug_html(page)
-    fail("Could not fill Signature field")
+    fail("Could not fill Sigma rule field")
 
 
 def fill_sigma_detection_form(page: Page, rule: dict):
