@@ -401,6 +401,52 @@ def _select_language(page: Page, value_pattern: str):
     page.wait_for_timeout(MEDIUM_WAIT_MS)
 
 
+def fill_suricata_detection_form(page: Page, rule: dict):
+    license_selectors = [
+        '#detection-license-create',
+        '#detection-license-edit',
+    ]
+    signature_selectors = [
+        '#detection-signature-create',
+        '#detection-signature-edit',
+        'textarea',
+        '[data-aid*="signature"] textarea',
+    ]
+
+    _select_language(page, r"^Suricata$")
+
+    license_box = None
+    for selector in license_selectors:
+        locator = page.locator(selector)
+        if locator.count() > 0:
+            license_box = locator.first
+            break
+
+    if license_box is None:
+        write_debug_html(page)
+        fail("Could not find License field")
+
+    license_box.click(force=True)
+    page.wait_for_timeout(SHORT_WAIT_MS)
+    page.get_by_role("option", name=re.compile(r"GPL-2.0", re.I)).click()
+    page.wait_for_timeout(MEDIUM_WAIT_MS)
+
+    for selector in signature_selectors:
+        try:
+            locator = page.locator(selector).first
+            if locator.count() > 0:
+                locator.click(force=True)
+                page.wait_for_timeout(SHORT_WAIT_MS)
+                locator.fill(rule["content"])
+                page.wait_for_timeout(MEDIUM_WAIT_MS)
+                return
+        except Exception:
+            pass
+
+    write_debug_html(page)
+    fail("Could not fill Signature field")
+
+
 def fill_sigma_detection_form(page: Page, rule: dict):
     license_selectors = [
         '#detection-license-create',
@@ -448,33 +494,6 @@ def fill_sigma_detection_form(page: Page, rule: dict):
             locator.fill(rule["content"])
             page.wait_for_timeout(MEDIUM_WAIT_MS)
             return
-        except Exception:
-            pass
-
-    write_debug_html(page)
-    fail("Could not fill Sigma rule field")
-
-
-def fill_sigma_detection_form(page: Page, rule: dict):
-    sigma_selectors = [
-        '#detection-signature-create',
-        '#detection-signature-edit',
-        'textarea',
-        '[data-aid*="signature"] textarea',
-        '[data-aid*="sigma"] textarea',
-    ]
-
-    _select_language(page, r"^Sigma$")
-
-    for selector in sigma_selectors:
-        try:
-            locator = page.locator(selector).first
-            if locator.count() > 0:
-                locator.click(force=True)
-                page.wait_for_timeout(SHORT_WAIT_MS)
-                locator.fill(rule["content"])
-                page.wait_for_timeout(MEDIUM_WAIT_MS)
-                return
         except Exception:
             pass
 
