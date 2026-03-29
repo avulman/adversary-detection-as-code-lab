@@ -452,12 +452,11 @@ def fill_sigma_detection_form(page: Page, rule: dict):
         '#detection-license-create',
         '#detection-license-edit',
     ]
-    sigma_selectors = [
+    signature_selectors = [
         '#detection-signature-create',
         '#detection-signature-edit',
         'textarea',
         '[data-aid*="signature"] textarea',
-        '[data-aid*="sigma"] textarea',
     ]
 
     _select_language(page, r"^Sigma$")
@@ -471,34 +470,27 @@ def fill_sigma_detection_form(page: Page, rule: dict):
 
     if license_box is None:
         write_debug_html(page)
-        fail("Could not find License field for Sigma rule")
+        fail("Could not find License field")
 
     license_box.click(force=True)
     page.wait_for_timeout(SHORT_WAIT_MS)
     page.get_by_role("option", name=re.compile(r"GPL-2.0", re.I)).click()
     page.wait_for_timeout(MEDIUM_WAIT_MS)
 
-    for selector in sigma_selectors:
+    for selector in signature_selectors:
         try:
             locator = page.locator(selector).first
-            if locator.count() == 0:
-                continue
-
-            locator.click(force=True)
-            page.wait_for_timeout(SHORT_WAIT_MS)
-
-            # Clear any existing text before filling
-            locator.fill("")
-            page.wait_for_timeout(SHORT_WAIT_MS)
-
-            locator.fill(rule["content"])
-            page.wait_for_timeout(MEDIUM_WAIT_MS)
-            return
+            if locator.count() > 0:
+                locator.click(force=True)
+                page.wait_for_timeout(SHORT_WAIT_MS)
+                locator.fill(rule["content"])
+                page.wait_for_timeout(MEDIUM_WAIT_MS)
+                return
         except Exception:
             pass
 
     write_debug_html(page)
-    fail("Could not fill Sigma rule field")
+    fail("Could not fill Signature field")
 
 
 def click_first_matching_button(page: Page, patterns: list[str], failure_message: str):
