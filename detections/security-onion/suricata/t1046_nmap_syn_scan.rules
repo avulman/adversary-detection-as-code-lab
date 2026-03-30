@@ -1,1 +1,1 @@
-alert tcp any any -> $HOME_NET any (msg:"T1046 Nmap SYN Scan Detected"; flags:S; flow:stateless; threshold:type both, track by_src, count 10, seconds 10; classtype:attempted-recon; sid:1000001; rev:1;)
+alert tcp any any -> any any (msg:"T1046 Nmap SYN Scan Detected"; flags:S; flow:stateless; threshold:type both, track by_src, count 10, seconds 10; classtype:attempted-recon; sid:1000001; rev:1;)
