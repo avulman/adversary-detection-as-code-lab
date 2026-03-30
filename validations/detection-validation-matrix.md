@@ -19,18 +19,6 @@ This matrix tracks implemented detections across the lab environment, mapped to 
 | Initial Access | T1133 | SMB Connection in Zeek Conn | Zeek Conn | Sigma | On ingest / Sigma alerting | Working | 2 | Network connection to SMB service on TCP 445 | Useful baseline visibility into remote service access and file-sharing activity, but potentially noisy in Windows environments without tuning. |
 | Defense Evasion / Persistence / Ingress Tool Transfer | T1197 | BITS Download Activity | Suricata | Sensor-NSM / Security Onion | Real-time signature | Working | 3 | Background file transfer / stealthy download behavior | Good supplemental coverage, but BITS has legitimate enterprise use. Best used with endpoint context and destination reputation. |
 
-## Current Coverage Summary
-
-### Covered ATT&CK Techniques
-- T1003.001 - LSASS Access
-- T1012 - Registry Query
-- T1027 - Obfuscated Files or Information
-- T1046 - Network Service Discovery
-- T1059.001 - PowerShell
-- T1071.001 - Web Protocols: HTTP/S
-- T1105 - Ingress Tool Transfer
-- T1197 - BITS Jobs
-
 ### Primary Telemetry Sources
 - Sysmon -> Splunk
 - Suricata -> Security Onion
