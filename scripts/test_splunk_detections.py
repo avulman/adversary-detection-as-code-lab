@@ -1,38 +1,35 @@
 from pathlib import Path
 import json
 import os
-import re
 import sys
 import time
 import uuid
+import warnings
 
 import requests
+import urllib3
+
+warnings.filterwarnings("ignore", message="Unverified HTTPS request")
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 ROOT = Path(__file__).resolve().parent.parent
-
 SPLUNK_DIR = ROOT / "detections" / "splunk" / "mitre-att&ck"
 TESTS_DIR = ROOT / "tests" / "splunk"
 
-SPLUNK_BASE_URL = os.getenv("SPLUNK_BASE_URL", "").rstrip("/")
-SPLUNK_USERNAME = os.getenv("SPLUNK_USERNAME", "")
-SPLUNK_PASSWORD = os.getenv("SPLUNK_PASSWORD", "")
-SPLUNK_HEC_URL = os.getenv("SPLUNK_HEC_URL", "").rstrip("/")
-SPLUNK_HEC_TOKEN = os.getenv("SPLUNK_HEC_TOKEN", "")
-SPLUNK_TEST_INDEX = os.getenv("SPLUNK_TEST_INDEX", "detection_test")
-
-requests.packages.urllib3.disable_warnings()
+SPLUNK_BASE_URL = os.getenv("SPLUNK_BASE_URL", "").strip().rstrip("/")
+SPLUNK_USERNAME = os.getenv("SPLUNK_USERNAME", "").strip()
+SPLUNK_PASSWORD = os.getenv("SPLUNK_PASSWORD", "").strip()
+SPLUNK_HEC_URL = os.getenv("SPLUNK_HEC_URL", "").strip().rstrip("/")
+SPLUNK_HEC_TOKEN = os.getenv("SPLUNK_HEC_TOKEN", "").strip()
+SPLUNK_TEST_INDEX = os.getenv("SPLUNK_TEST_INDEX", "").strip() or "detection_test"
 
 
-def fail(msg: str):
-    print(f"[FAIL] {msg}")
+def fail(message: str):
+    print(f"[FAIL] {message}")
     sys.exit(1)
 
 
-def log(msg: str):
-    print(f"[INFO] {msg}")
-
-
-def splunk_session() -> requests.Session:
+def create_session() -> requests.Session:
     if not SPLUNK_BASE_URL or not SPLUNK_USERNAME or not SPLUNK_PASSWORD:
         fail("Missing SPLUNK_BASE_URL, SPLUNK_USERNAME, or SPLUNK_PASSWORD")
 
@@ -67,7 +64,7 @@ def parse_detection_file(path: Path) -> tuple[dict, str]:
         "email_message",
     ]
 
-    missing = [k for k in required if k not in metadata]
+    missing = [key for key in required if key not in metadata]
     if missing:
         fail(f"{path.name} missing metadata keys: {', '.join(missing)}")
 
@@ -80,12 +77,22 @@ def parse_detection_file(path: Path) -> tuple[dict, str]:
 def load_test_config(rule_stem: str) -> dict:
     config_path = TESTS_DIR / rule_stem / "test_config.json"
     if not config_path.exists():
-        fail(f"Missing test config: {config_path.relative_to(ROOT)}")
+        fail(f"Missing Splunk test config: {config_path.relative_to(ROOT)}")
 
     try:
-        return json.loads(config_path.read_text(encoding="utf-8"))
+        data = json.loads(config_path.read_text(encoding="utf-8"))
     except Exception as e:
         fail(f"Invalid JSON in {config_path.relative_to(ROOT)}: {e}")
+
+    if not isinstance(data, dict):
+        fail(f"Splunk test config must be a JSON object: {config_path.relative_to(ROOT)}")
+
+    required = ["source", "sourcetype", "host"]
+    missing = [key for key in required if key not in data or not str(data[key]).strip()]
+    if missing:
+        fail(f"{config_path.relative_to(ROOT)} missing required keys: {', '.join(missing)}")
+
+    return data
 
 
 def normalize_fixture_event(raw_event: dict) -> dict:
@@ -199,14 +206,12 @@ def wait_for_ack(channel_id: str, ack_ids: list[int], timeout_seconds: int = 60)
     }
 
     deadline = time.time() + timeout_seconds
-    pending = {int(x) for x in ack_ids}
 
     while time.time() < deadline:
         response = requests.post(
             f"{SPLUNK_HEC_URL}/services/collector/ack",
-            params={"channel": channel_id},
             headers=headers,
-            json={"acks": sorted(pending)},
+            json={"acks": ack_ids},
             verify=False,
             timeout=30,
         )
@@ -217,226 +222,150 @@ def wait_for_ack(channel_id: str, ack_ids: list[int], timeout_seconds: int = 60)
         try:
             body = response.json()
         except Exception:
-            fail(f"HEC ack polling returned non-JSON response: {response.text[:500]}")
+            fail(f"HEC ack endpoint returned non-JSON response: {response.text[:500]}")
 
-        ack_map = body.get("acks", {})
-        completed = {
-            ack_id
-            for ack_id in pending
-            if ack_map.get(str(ack_id)) is True or ack_map.get(ack_id) is True
-        }
-        pending -= completed
-
-        if not pending:
+        acks = body.get("acks", {})
+        if all(acks.get(str(ack_id)) is True or acks.get(ack_id) is True for ack_id in ack_ids):
+            time.sleep(3)
             return
 
         time.sleep(2)
 
-    fail(f"Timed out waiting for HEC ACK(s): {sorted(pending)}")
+    fail(f"Timed out waiting for HEC ack(s): {ack_ids}")
 
 
-def split_query_pipeline(query: str) -> tuple[str, str]:
-    """
-    Split the SPL into:
-      - base search before the first pipe
-      - remaining pipeline including leading pipe, if any
-    """
-    parts = query.split("|", 1)
-    base = parts[0].strip()
-    pipeline = f"|{parts[1]}" if len(parts) > 1 else ""
-    return base, pipeline
-
-
-def rewrite_query_for_test(query: str, index: str, source: str) -> str:
-    """
-    Rewrite the query so the index/source constraints are part of the base search,
-    not appended later as a pipeline-stage search.
-
-    Example:
-      index=sysmon EventCode=1 Image="*powershell.exe"
-      | table ...
-    becomes:
-      search index=detection_test source="my_source" EventCode=1 Image="*powershell.exe"
-      | table ...
-    """
-    base, pipeline = split_query_pipeline(query)
-
-    rewritten_base = re.sub(r"\bindex\s*=\s*\S+", f"index={index}", base, count=1)
-
-    if rewritten_base == base:
-        rewritten_base = f'index={index} source="{source}" {base}'.strip()
-    else:
-        rewritten_base = f'source="{source}" {rewritten_base}'.strip()
-
-    final_query = f"search {rewritten_base}"
-    if pipeline:
-        final_query = f"{final_query} {pipeline}"
-
-    return final_query.strip()
-
-
-def rest_post(session: requests.Session, endpoint: str, data: dict) -> dict:
+def create_search_job(session: requests.Session, search: str) -> str:
     response = session.post(
-        f"{SPLUNK_BASE_URL}{endpoint}",
-        data=data,
-        timeout=60,
-    )
-
-    if response.status_code not in (200, 201):
-        fail(f"POST {endpoint} failed ({response.status_code}): {response.text[:500]}")
-
-    try:
-        return response.json()
-    except Exception:
-        fail(f"POST {endpoint} returned non-JSON response: {response.text[:500]}")
-        return {}
-
-
-def rest_get(session: requests.Session, endpoint: str, params: dict | None = None) -> dict:
-    response = session.get(
-        f"{SPLUNK_BASE_URL}{endpoint}",
-        params=params or {},
-        timeout=60,
-    )
-
-    if response.status_code != 200:
-        fail(f"GET {endpoint} failed ({response.status_code}): {response.text[:500]}")
-
-    try:
-        return response.json()
-    except Exception:
-        fail(f"GET {endpoint} returned non-JSON response: {response.text[:500]}")
-        return {}
-
-
-def create_search_job(session: requests.Session, query: str) -> str:
-    data = rest_post(
-        session,
-        "/services/search/jobs",
-        {
-            "search": query if query.lower().startswith("search ") else f"search {query}",
-            "output_mode": "json",
+        f"{SPLUNK_BASE_URL}/services/search/jobs",
+        data={
+            "search": search,
             "exec_mode": "normal",
+            "output_mode": "json",
         },
+        timeout=60,
     )
 
-    sid = data.get("sid")
+    if response.status_code != 201:
+        fail(f"Failed to create Splunk search job ({response.status_code}): {response.text[:500]}")
+
+    try:
+        body = response.json()
+    except Exception:
+        fail(f"Splunk returned non-JSON search job response: {response.text[:500]}")
+
+    sid = body.get("sid")
     if not sid:
-        fail("Splunk search job creation did not return a sid")
+        fail(f"Splunk search job response missing sid: {body}")
 
     return sid
 
 
-def wait_for_job(session: requests.Session, sid: str):
-    for _ in range(30):
-        payload = rest_get(
-            session,
-            f"/services/search/jobs/{sid}",
-            {"output_mode": "json"},
+def wait_for_search_completion(session: requests.Session, sid: str, timeout_seconds: int = 120):
+    deadline = time.time() + timeout_seconds
+
+    while time.time() < deadline:
+        response = session.get(
+            f"{SPLUNK_BASE_URL}/services/search/jobs/{sid}",
+            params={"output_mode": "json"},
+            timeout=30,
         )
 
-        entries = payload.get("entry", [])
-        if entries:
-            content = entries[0].get("content", {})
-            if content.get("isDone"):
-                return
+        if response.status_code != 200:
+            fail(f"Failed to poll Splunk search job {sid} ({response.status_code}): {response.text[:500]}")
+
+        try:
+            body = response.json()
+        except Exception:
+            fail(f"Splunk job status returned non-JSON response: {response.text[:500]}")
+
+        entries = body.get("entry", [])
+        if not entries:
+            fail(f"Splunk job status response missing entry for sid {sid}")
+
+        content = entries[0].get("content", {})
+        if content.get("isDone") is True:
+            return
 
         time.sleep(2)
 
-    fail(f"Timed out waiting for search job {sid} to finish")
+    fail(f"Timed out waiting for Splunk search job to complete: {sid}")
 
 
-def get_result_count(session: requests.Session, sid: str) -> int:
-    payload = rest_get(
-        session,
-        f"/services/search/jobs/{sid}",
-        {"output_mode": "json"},
+def get_search_results_count(session: requests.Session, sid: str) -> int:
+    response = session.get(
+        f"{SPLUNK_BASE_URL}/services/search/jobs/{sid}/results",
+        params={"output_mode": "json", "count": 0},
+        timeout=30,
     )
 
-    entries = payload.get("entry", [])
-    if not entries:
-        fail(f"No job metadata returned for search job {sid}")
-
-    content = entries[0].get("content", {})
-    result_count = content.get("resultCount", 0)
+    if response.status_code != 200:
+        fail(f"Failed to fetch Splunk search results ({response.status_code}): {response.text[:500]}")
 
     try:
-        return int(float(result_count))
+        body = response.json()
     except Exception:
-        return 0
+        fail(f"Splunk search results returned non-JSON response: {response.text[:500]}")
+
+    results = body.get("results", [])
+    return len(results)
 
 
-def run_rule_test(rule_path: Path):
-    rule_stem = rule_path.stem
-    config = load_test_config(rule_stem)
-    positive_events = read_positive_fixture_events(rule_stem)
-    _, query = parse_detection_file(rule_path)
+def build_test_search(query: str) -> str:
+    query = query.strip()
 
-    source = config.get("source", f"detection_test_{rule_stem}")
-    sourcetype = config.get("sourcetype", "_json")
-    host = config.get("host", "detection-test-host")
-    index = config.get("index", SPLUNK_TEST_INDEX)
-    expected_positive_min = int(config.get("expected_positive_min", 1))
+    if not query.lower().startswith("search "):
+        query = f"search {query}"
 
-    run_source = f"{source}_{uuid.uuid4().hex[:12]}"
-    channel_id = str(uuid.uuid4())
-
-    log(f"Submitting {len(positive_events)} positive fixture event(s) for {rule_path.name}")
-
-    ack_ids: list[int] = []
-    for event in positive_events:
-        ack_id = submit_event_to_hec(
-            event=event,
-            index=index,
-            source=run_source,
-            sourcetype=sourcetype,
-            host=host,
-            channel_id=channel_id,
-        )
-        if ack_id is not None:
-            ack_ids.append(int(ack_id))
-
-    wait_for_ack(channel_id=channel_id, ack_ids=ack_ids)
-
-    session = splunk_session()
-    test_query = rewrite_query_for_test(query, index, run_source)
-    log(f"Testing {rule_path.name} with query: {test_query}")
-
-    sid = create_search_job(session, test_query)
-    wait_for_job(session, sid)
-    result_count = get_result_count(session, sid)
-
-    if result_count < expected_positive_min:
-        fail(
-            f"{rule_path.name} failed Splunk true-positive test: "
-            f"result_count={result_count}, expected at least {expected_positive_min}"
-        )
-
-    log(
-        f"Splunk true-positive test passed for {rule_path.name} "
-        f"(results={result_count}, expected_min={expected_positive_min})"
-    )
+    return query
 
 
-def main():
-    if not SPLUNK_DIR.exists():
-        fail(f"Missing Splunk detections directory: {SPLUNK_DIR.relative_to(ROOT)}")
+def run_tests():
+    spl_files = sorted(SPLUNK_DIR.glob("*.spl"))
+    if not spl_files:
+        fail(f"No Splunk detection files found in {SPLUNK_DIR.relative_to(ROOT)}")
 
     hec_healthcheck()
+    session = create_session()
 
-    files = sorted(SPLUNK_DIR.glob("*.spl"))
-    if not files:
-        fail("No .spl files found")
+    for spl_file in spl_files:
+        metadata, query = parse_detection_file(spl_file)
+        config = load_test_config(spl_file.stem)
+        events = read_positive_fixture_events(spl_file.stem)
 
-    for rule_path in files:
-        test_dir = TESTS_DIR / rule_path.stem
-        if test_dir.exists():
-            run_rule_test(rule_path)
-        else:
-            log(f"Skipping {rule_path.name} because no test directory exists")
+        print(f"[INFO] Running Splunk tests for {spl_file.name}")
 
-    print("[PASS] Splunk-backed detection true-positive tests succeeded")
+        channel_id = str(uuid.uuid4())
+        ack_ids = []
+
+        for event in events:
+            ack_id = submit_event_to_hec(
+                event=event,
+                index=SPLUNK_TEST_INDEX,
+                source=str(config["source"]),
+                sourcetype=str(config["sourcetype"]),
+                host=str(config["host"]),
+                channel_id=channel_id,
+            )
+            if ack_id is not None:
+                ack_ids.append(ack_id)
+
+        wait_for_ack(channel_id, ack_ids)
+
+        search = build_test_search(query)
+        sid = create_search_job(session, search)
+        wait_for_search_completion(session, sid)
+        result_count = get_search_results_count(session, sid)
+
+        if result_count < 1:
+            fail(
+                f"Splunk detection test failed for {spl_file.name}. "
+                f"Search returned 0 results after ingesting positive fixtures."
+            )
+
+        print(f"[PASS] {spl_file.name} returned {result_count} result(s)")
+
+    print("[PASS] All Splunk tests passed")
 
 
 if __name__ == "__main__":
-    main()
+    run_tests()
