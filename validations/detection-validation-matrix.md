@@ -17,7 +17,6 @@ This matrix tracks implemented detections across the lab environment, mapped to 
 | T1071.001 | Command and Control | Python Requests User-Agent in Zeek HTTP | Zeek HTTP | Sigma | On ingest / Sigma alerting | 3 | Scripted HTTP activity using python-requests | Good behavioral network detection for scripted web traffic. May also catch benign internal automation and developer tooling. |
 | T1105 | Command and Control / Ingress Tool Transfer | Executable Download (.exe) | Suricata | Sensor-NSM / Security Onion | Real-time signature | 3 | Tool transfer / payload staging | Useful but broad. Requires allowlisting for legitimate software repositories and admin activity. |
 | T1133 | Initial Access | SMB Connection in Zeek Conn | Zeek Conn | Sigma | On ingest / Sigma alerting | 2 | Network connection to SMB service on TCP 445 | Useful baseline visibility into remote service access and file-sharing activity, but potentially noisy in Windows environments without tuning. |
-| T1197 | Defense Evasion / Persistence / Ingress Tool Transfer | BITS Download Activity | Suricata | Sensor-NSM / Security Onion | Real-time signature | 3 | Background file transfer / stealthy download behavior | Good supplemental coverage, but BITS has legitimate enterprise use. Best used with endpoint context and destination reputation. |
 
 ### Primary Telemetry Sources
 - Sysmon -> Splunk
