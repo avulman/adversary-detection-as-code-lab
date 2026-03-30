@@ -1,0 +1,7 @@
+{
+  "sourcetype": "_json",
+  "source": "detection_test_t1003_lsass_access",
+  "host": "WIN-ENDPOINT-01",
+  "index": "detection_test",
+  "expected_positive_min": 1
+}
