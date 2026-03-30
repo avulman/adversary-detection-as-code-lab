@@ -1,4 +1,4 @@
-name: Validate Detection Repo
+name: Validate Detection Repository
 
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
           SPLUNK_PASSWORD: ${{ secrets.SPLUNK_PASSWORD }}
         run: py scripts\validate_detection_syntax.py
 
-      - name: Run Splunk-backed detection true-positive tests
+      - name: Run Splunk detection tests
         env:
           SPLUNK_BASE_URL: ${{ secrets.SPLUNK_BASE_URL }}
           SPLUNK_USERNAME: ${{ secrets.SPLUNK_USERNAME }}
