@@ -1,0 +1,11 @@
+{
+  "event": {
+    "dataset": "zeek.conn"
+  },
+  "destination": {
+    "port": 445
+  },
+  "network": {
+    "transport": "tcp"
+  }
+}

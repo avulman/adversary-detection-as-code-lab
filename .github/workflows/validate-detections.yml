@@ -1,4 +1,4 @@
-name: Validate Detection Repository
+name: Validate Repository, Test Detections
 
 on:
   push:
