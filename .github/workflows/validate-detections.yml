@@ -43,3 +43,6 @@ jobs:
 
       - name: Run Suricata detection tests
         run: py scripts\test_suricata_detections.py
+
+      - name: Run Sigma detection tests
+        run: py scripts\test_sigma_detections.py
