@@ -32,10 +32,6 @@ def log(msg: str):
     print(f"[INFO] {msg}")
 
 
-def warn(msg: str):
-    print(f"[WARN] {msg}")
-
-
 def splunk_session() -> requests.Session:
     if not SPLUNK_BASE_URL or not SPLUNK_USERNAME or not SPLUNK_PASSWORD:
         fail("Missing SPLUNK_BASE_URL, SPLUNK_USERNAME, or SPLUNK_PASSWORD")
@@ -149,10 +145,12 @@ def submit_event_to_hec(
     source: str,
     sourcetype: str,
     host: str,
-):
+    channel_id: str,
+) -> int | None:
     headers = {
         "Authorization": f"Splunk {SPLUNK_HEC_TOKEN}",
         "Content-Type": "application/json",
+        "X-Splunk-Request-Channel": channel_id,
     }
 
     payload = {
@@ -181,6 +179,58 @@ def submit_event_to_hec(
 
     if body.get("code") != 0:
         fail(f"HEC returned error code for event submission: {body}")
+
+    # If ACK is enabled, Splunk returns ackId / ackID.
+    ack_id = body.get("ackId")
+    if ack_id is None:
+        ack_id = body.get("ackID")
+
+    return ack_id
+
+
+def wait_for_ack(channel_id: str, ack_ids: list[int], timeout_seconds: int = 60):
+    if not ack_ids:
+        # ACK not enabled on token; nothing to poll.
+        time.sleep(6)
+        return
+
+    headers = {
+        "Authorization": f"Splunk {SPLUNK_HEC_TOKEN}",
+        "Content-Type": "application/json",
+        "X-Splunk-Request-Channel": channel_id,
+    }
+
+    deadline = time.time() + timeout_seconds
+    pending = {int(x) for x in ack_ids}
+
+    while time.time() < deadline:
+        response = requests.post(
+            f"{SPLUNK_HEC_URL}/services/collector/ack",
+            params={"channel": channel_id},
+            headers=headers,
+            json={"acks": sorted(pending)},
+            verify=False,
+            timeout=30,
+        )
+
+        if response.status_code != 200:
+            fail(f"HEC ack polling failed ({response.status_code}): {response.text[:500]}")
+
+        try:
+            body = response.json()
+        except Exception:
+            fail(f"HEC ack polling returned non-JSON response: {response.text[:500]}")
+
+        ack_map = body.get("acks", {})
+        completed = {ack_id for ack_id in pending if ack_map.get(str(ack_id)) is True or ack_map.get(ack_id) is True}
+        pending -= completed
+
+        if not pending:
+            return
+
+        time.sleep(2)
+
+    fail(f"Timed out waiting for HEC ACK(s): {sorted(pending)}")
 
 
 def rewrite_query_for_test(query: str, index: str, source: str) -> str:
@@ -302,21 +352,25 @@ def run_rule_test(rule_path: Path):
     index = config.get("index", SPLUNK_TEST_INDEX)
     expected_positive_min = int(config.get("expected_positive_min", 1))
 
-    # Make source unique per CI run to avoid collisions with old test data.
     run_source = f"{source}_{uuid.uuid4().hex[:12]}"
+    channel_id = str(uuid.uuid4())
 
     log(f"Submitting {len(positive_events)} positive fixture event(s) for {rule_path.name}")
+
+    ack_ids: list[int] = []
     for event in positive_events:
-        submit_event_to_hec(
+        ack_id = submit_event_to_hec(
             event=event,
             index=index,
             source=run_source,
             sourcetype=sourcetype,
             host=host,
+            channel_id=channel_id,
         )
+        if ack_id is not None:
+            ack_ids.append(int(ack_id))
 
-    # Give Splunk a short time to index the HEC events.
-    time.sleep(6)
+    wait_for_ack(channel_id=channel_id, ack_ids=ack_ids)
 
     session = splunk_session()
     test_query = rewrite_query_for_test(query, index, run_source)
