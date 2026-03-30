@@ -1,0 +1,7 @@
+{
+  "sourcetype": "_json",
+  "source": "detection_test_t1027_obfuscated_files_or_information",
+  "host": "WIN-ENDPOINT-01",
+  "index": "detection_test",
+  "expected_positive_min": 3
+}
