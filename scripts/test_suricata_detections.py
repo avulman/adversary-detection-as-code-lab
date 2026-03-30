@@ -140,6 +140,11 @@ def run_tests():
 
     for rule_path in rule_files:
         rule_stem = rule_path.stem
+        test_dir = TESTS_DIR / rule_stem
+
+        if not test_dir.exists():
+            fail(f"Missing Suricata test directory: {test_dir.relative_to(ROOT)}")
+
         sid, msg = parse_rule_metadata(rule_path)
         load_test_config(rule_stem)
         pcaps = get_positive_pcaps(rule_stem)
