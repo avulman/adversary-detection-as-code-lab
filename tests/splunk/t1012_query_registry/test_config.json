@@ -1,6 +1,6 @@
 {
   "sourcetype": "_json",
-  "source": "detection_test_t1059.001_powershell_execution",
+  "source": "detection_test_t1012_query_registry",
   "host": "WIN-ENDPOINT-01",
   "index": "detection_test",
   "expected_positive_min": 1
