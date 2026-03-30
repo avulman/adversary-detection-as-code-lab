@@ -1,0 +1,7 @@
+{
+  "sourcetype": "_json",
+  "source": "detection_test_t1059.001_powershell_execution",
+  "host": "WIN-ENDPOINT-01",
+  "index": "detection_test",
+  "expected_positive_min": 1
+}

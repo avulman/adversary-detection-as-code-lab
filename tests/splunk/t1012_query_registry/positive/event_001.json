@@ -1,0 +1,1 @@
+{"preview":false,"result":{"_time":"2026-03-29T15:51:47.341-06:00","host":"WIN-ENDPOINT-01","User":["NOT_TRANSLATED","CORP\\Administrator"],"ParentImage":"C:\\Windows\\System32\\cmd.exe","Image":"C:\\Windows\\System32\\reg.exe","CommandLine":"reg  query HKLM\\system\\currentcontrolset\\services /s"}}
