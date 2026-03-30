@@ -180,7 +180,6 @@ def submit_event_to_hec(
     if body.get("code") != 0:
         fail(f"HEC returned error code for event submission: {body}")
 
-    # If ACK is enabled, Splunk returns ackId / ackID.
     ack_id = body.get("ackId")
     if ack_id is None:
         ack_id = body.get("ackID")
@@ -190,7 +189,6 @@ def submit_event_to_hec(
 
 def wait_for_ack(channel_id: str, ack_ids: list[int], timeout_seconds: int = 60):
     if not ack_ids:
-        # ACK not enabled on token; nothing to poll.
         time.sleep(6)
         return
 
@@ -222,7 +220,11 @@ def wait_for_ack(channel_id: str, ack_ids: list[int], timeout_seconds: int = 60)
             fail(f"HEC ack polling returned non-JSON response: {response.text[:500]}")
 
         ack_map = body.get("acks", {})
-        completed = {ack_id for ack_id in pending if ack_map.get(str(ack_id)) is True or ack_map.get(ack_id) is True}
+        completed = {
+            ack_id
+            for ack_id in pending
+            if ack_map.get(str(ack_id)) is True or ack_map.get(ack_id) is True
+        }
         pending -= completed
 
         if not pending:
@@ -233,18 +235,44 @@ def wait_for_ack(channel_id: str, ack_ids: list[int], timeout_seconds: int = 60)
     fail(f"Timed out waiting for HEC ACK(s): {sorted(pending)}")
 
 
+def split_query_pipeline(query: str) -> tuple[str, str]:
+    """
+    Split the SPL into:
+      - base search before the first pipe
+      - remaining pipeline including leading pipe, if any
+    """
+    parts = query.split("|", 1)
+    base = parts[0].strip()
+    pipeline = f"|{parts[1]}" if len(parts) > 1 else ""
+    return base, pipeline
+
+
 def rewrite_query_for_test(query: str, index: str, source: str) -> str:
-    rewritten = re.sub(r"\bindex\s*=\s*\S+", f"index={index}", query, count=1)
+    """
+    Rewrite the query so the index/source constraints are part of the base search,
+    not appended later as a pipeline-stage search.
 
-    if rewritten == query:
-        if rewritten.lower().startswith(("search ", "|", "from ")):
-            rewritten = f'{rewritten} | search source="{source}"'
-        else:
-            rewritten = f'search index={index} source="{source}" {rewritten}'
+    Example:
+      index=sysmon EventCode=1 Image="*powershell.exe"
+      | table ...
+    becomes:
+      search index=detection_test source="my_source" EventCode=1 Image="*powershell.exe"
+      | table ...
+    """
+    base, pipeline = split_query_pipeline(query)
+
+    rewritten_base = re.sub(r"\bindex\s*=\s*\S+", f"index={index}", base, count=1)
+
+    if rewritten_base == base:
+        rewritten_base = f'index={index} source="{source}" {base}'.strip()
     else:
-        rewritten = f'{rewritten} | search source="{source}"'
+        rewritten_base = f'source="{source}" {rewritten_base}'.strip()
 
-    return rewritten
+    final_query = f"search {rewritten_base}"
+    if pipeline:
+        final_query = f"{final_query} {pipeline}"
+
+    return final_query.strip()
 
 
 def rest_post(session: requests.Session, endpoint: str, data: dict) -> dict:
@@ -282,13 +310,11 @@ def rest_get(session: requests.Session, endpoint: str, params: dict | None = Non
 
 
 def create_search_job(session: requests.Session, query: str) -> str:
-    search_query = query if query.lower().startswith("search ") else f"search {query}"
-
     data = rest_post(
         session,
         "/services/search/jobs",
         {
-            "search": search_query,
+            "search": query if query.lower().startswith("search ") else f"search {query}",
             "output_mode": "json",
             "exec_mode": "normal",
         },
