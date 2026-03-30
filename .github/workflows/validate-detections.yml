@@ -40,3 +40,6 @@ jobs:
           SPLUNK_HEC_TOKEN: ${{ secrets.SPLUNK_HEC_TOKEN }}
           SPLUNK_TEST_INDEX: detection_test
         run: py scripts\test_splunk_detections.py
+
+      - name: Run Suricata detection tests
+        run: py scripts\test_suricata_detections.py
