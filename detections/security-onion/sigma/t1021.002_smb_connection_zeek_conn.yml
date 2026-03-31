@@ -1,4 +1,4 @@
-title: T1133 SMB Connection in Zeek Conn
+title: T1021.002 SMB Connection in Zeek Conn
 id: 7a8b6b91-b1fb-4ae4-9ec4-d4j9f5a0c808
 status: experimental
 description: Detects network connections to TCP port 445 in Zeek conn logs, which may indicate SMB activity associated with remote access, file movement, or lateral movement.
@@ -23,5 +23,5 @@ falsepositives:
   - Domain and workstation communications
 level: medium
 tags:
-  - attack.initial-access
-  - attack.t1133
+  - attack.lateral-movement
+  - attack.t1021.002
