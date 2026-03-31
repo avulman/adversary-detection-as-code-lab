@@ -57,16 +57,17 @@ The goal is not just to detect threats, but to ensure detections are reliable an
 
 ---
 
-## Detection Workflow
+## Detection Lifecycle
 
-This lab follows a consistent detection engineering lifecycle:
+This project models a full detection engineering lifecycle:
 
-1. Simulate adversary behavior
-2. Verify telemetry is captured
-3. Develop detection logic
-4. Validate detection against known activity
-5. Store test cases and results
-6. Map detection to MITRE ATT&CK
+1. Adversary simulation generates telemetry
+2. Alerts are analyzed by a cybersecurity analyst
+3. Detections are developed and stored as code
+4. CI/CD pipelines validate detections using test data
+5. Validated detections are deployed back into the environment
+
+This creates a continuous feedback loop for improving detection quality.
 
 ---
 

@@ -5,7 +5,7 @@ description: Detects network connections to TCP port 445 in Zeek conn logs, whic
 author: Anton Vulman
 date: 2026-03-29
 references:
-  - https://attack.mitre.org/techniques/T1021.002/
+  - https://attack.mitre.org/techniques/T1021/002/
 logsource:
   product: zeek
   service: conn

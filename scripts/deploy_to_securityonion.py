@@ -7,6 +7,14 @@ from urllib.parse import quote
 
 from playwright.sync_api import sync_playwright, Page, BrowserContext, Locator
 
+"""
+Automates full lifecycle management of Security Onion detections.
+
+- Compares repo state vs deployed state
+- Creates, updates, and deletes detections via UI automation
+- Ensures consistency using state tracking
+"""
+
 ROOT = Path(__file__).resolve().parent.parent
 
 SO_BASE_DIR = ROOT / "detections" / "security-onion"

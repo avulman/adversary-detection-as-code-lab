@@ -19,6 +19,14 @@ STATE_FILE = STATE_DIR / "securityonion_rule_state.json"
 
 ALLOWED_STATE_ENGINES = {"suricata", "sigma"}
 
+"""
+Validates repository structure and detection standards.
+
+- Ensures required directories and files exist
+- Validates detection formatting and metadata
+- Enforces consistency across the project
+"""
+
 
 def fail(msg: str):
     print(f"[FAIL] {msg}")

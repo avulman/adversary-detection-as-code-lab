@@ -14,6 +14,14 @@ ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "")
 requests.packages.urllib3.disable_warnings()
 
 
+"""
+Deploys Splunk detections as scheduled alerts via REST API.
+
+- Parses detection metadata from SPL files
+- Creates or updates saved searches
+- Configures alerting and scheduling
+"""
+
 def fail(msg: str):
     print(f"[FAIL] {msg}")
     sys.exit(1)
