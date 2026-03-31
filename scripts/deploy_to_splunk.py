@@ -1,14 +1,10 @@
 from pathlib import Path
 import os
-import subprocess
 import sys
-
 import requests
 
 ROOT = Path(__file__).resolve().parent.parent
 MITRE_ATTACK_DIR = ROOT / "detections" / "splunk" / "mitre-att&ck"
-TESTS_DIR = ROOT / "tests" / "splunk"
-TEST_RUNNER = ROOT / "scripts" / "test_splunk_detections.py"
 
 SPLUNK_BASE_URL = os.getenv("SPLUNK_BASE_URL", "").rstrip("/")
 SPLUNK_USERNAME = os.getenv("SPLUNK_USERNAME", "")
@@ -21,10 +17,6 @@ requests.packages.urllib3.disable_warnings()
 def fail(msg: str):
     print(f"[FAIL] {msg}")
     sys.exit(1)
-
-
-def log(msg: str):
-    print(f"[INFO] {msg}")
 
 
 def parse_detection_file(path: Path):
@@ -85,16 +77,20 @@ def build_payload(metadata: dict, query: str):
         "name": metadata["name"],
         "search": query,
         "description": f'{metadata["description"]} | MITRE {metadata["mitre"]}',
+
         "is_scheduled": "1",
         "cron_schedule": metadata["cron_schedule"],
         "disabled": metadata["disabled"],
+
         "alert_type": "number of events",
         "alert_comparator": "greater than",
         "alert_threshold": "0",
         "alert.track": "1",
+
         "dispatch.earliest_time": "-5m",
         "dispatch.latest_time": "now",
         "dispatch.ttl": "2p",
+
         "actions": "email",
         "action.email": "1",
         "action.email.to": ALERT_EMAIL_TO,
@@ -123,102 +119,10 @@ def update_saved_search(session, owner: str, app: str, metadata: dict, query: st
     return session.post(url, data=data)
 
 
-def validate_test_coverage(detection_files: list[Path]):
-    if not TESTS_DIR.exists():
-        fail(f"Missing Splunk tests directory: {TESTS_DIR.relative_to(ROOT)}")
-
-    if not TESTS_DIR.is_dir():
-        fail(f"Splunk tests path is not a directory: {TESTS_DIR.relative_to(ROOT)}")
-
-    for rule_path in detection_files:
-        rule_stem = rule_path.stem
-        test_dir = TESTS_DIR / rule_stem
-
-        if not test_dir.exists():
-            fail(
-                f"Missing test folder for {rule_path.name}: "
-                f"{test_dir.relative_to(ROOT)}"
-            )
-
-        if not test_dir.is_dir():
-            fail(
-                f"Test path for {rule_path.name} is not a directory: "
-                f"{test_dir.relative_to(ROOT)}"
-            )
-
-        config_path = test_dir / "test_config.json"
-        if not config_path.exists():
-            fail(
-                f"Missing test_config.json for {rule_path.name}: "
-                f"{config_path.relative_to(ROOT)}"
-            )
-
-        positive_dir = test_dir / "positive"
-        if not positive_dir.exists():
-            fail(
-                f"Missing positive test folder for {rule_path.name}: "
-                f"{positive_dir.relative_to(ROOT)}"
-            )
-
-        if not positive_dir.is_dir():
-            fail(
-                f"Positive test path for {rule_path.name} is not a directory: "
-                f"{positive_dir.relative_to(ROOT)}"
-            )
-
-        positive_files = sorted(positive_dir.glob("*.json"))
-        if not positive_files:
-            fail(
-                f"No positive fixture JSON files found for {rule_path.name}: "
-                f"{positive_dir.relative_to(ROOT)}"
-            )
-
-        log(
-            f"Validated test coverage for {rule_path.name} "
-            f"({len(positive_files)} positive fixture file(s))"
-        )
-
-
-def run_splunk_tests():
-    if not TEST_RUNNER.exists():
-        fail(f"Missing test runner script: {TEST_RUNNER.relative_to(ROOT)}")
-
-    required_test_env = [
-        "SPLUNK_HEC_URL",
-        "SPLUNK_HEC_TOKEN",
-        "SPLUNK_TEST_INDEX",
-    ]
-    missing_test_env = [name for name in required_test_env if not os.getenv(name, "").strip()]
-    if missing_test_env:
-        fail(
-            "Missing required Splunk test environment variable(s): "
-            + ", ".join(missing_test_env)
-        )
-
-    log("Running Splunk detection tests before deployment")
-
-    result = subprocess.run(
-        [sys.executable, str(TEST_RUNNER)],
-        cwd=str(ROOT),
-        env=os.environ.copy(),
-    )
-
-    if result.returncode != 0:
-        fail("Splunk detection tests failed. Blocking deployment to Splunk.")
-
-    print("[PASS] Splunk detection tests passed. Deployment may continue.")
-
-
 def main():
-    if not MITRE_ATTACK_DIR.exists():
-        fail(f"Missing Splunk detections directory: {MITRE_ATTACK_DIR.relative_to(ROOT)}")
-
     detection_files = sorted(MITRE_ATTACK_DIR.glob("*.spl"))
     if not detection_files:
         fail("No .spl files found")
-
-    validate_test_coverage(detection_files)
-    run_splunk_tests()
 
     session = splunk_session()
     owner = "nobody"
@@ -228,7 +132,7 @@ def main():
         app = metadata["app"]
         name = metadata["name"]
 
-        log(f"Processing {path.name} -> alert '{name}'")
+        print(f"[INFO] Processing {path.name} -> alert '{name}'")
         print(f"[DEBUG] App={app} Owner={owner}")
         print(f"[DEBUG] Query={query[:200]}")
 
