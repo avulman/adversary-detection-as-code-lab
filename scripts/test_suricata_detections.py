@@ -111,8 +111,23 @@ def main():
         test_dir = TESTS_DIR / rule_file.stem
 
         if not test_dir.exists():
-            log(f"Skipping {rule_file.name} (no test dir)")
-            continue
+            fail(
+                f"Missing test directory for {rule_file.name}: "
+                f"{test_dir.relative_to(ROOT)}"
+            )
+
+        if not test_dir.is_dir():
+            fail(
+                f"Test path for {rule_file.name} is not a directory: "
+                f"{test_dir.relative_to(ROOT)}"
+            )
+
+        config_path = test_dir / "test_config.json"
+        if not config_path.exists():
+            fail(
+                f"Missing test_config.json for {rule_file.name}: "
+                f"{config_path.relative_to(ROOT)}"
+            )
 
         run_suricata_test(rule_file, test_dir)
 

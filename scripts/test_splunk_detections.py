@@ -19,10 +19,6 @@ def log(msg: str):
     print(f"[INFO] {msg}")
 
 
-def warn(msg: str):
-    print(f"[WARN] {msg}")
-
-
 def parse_detection_file(path: Path) -> tuple[dict, str]:
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
     metadata = {}
@@ -214,7 +210,6 @@ def insert_implicit_ands(tokens: list[str]) -> list[str]:
                     result.append("AND")
             continue
 
-        # Copy parenthesis
         token = tokens[i]
         result.append(token)
         i += 1
@@ -236,7 +231,6 @@ def strip_quotes(value: str) -> str:
 def extract_event_value(event: dict, field: str):
     value = event.get(field)
 
-    # Some exported Splunk fields can come back as arrays; use the last non-empty item.
     if isinstance(value, list):
         non_empty = [str(v) for v in value if str(v).strip()]
         if non_empty:
