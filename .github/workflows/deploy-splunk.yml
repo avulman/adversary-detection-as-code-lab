@@ -30,4 +30,7 @@ jobs:
           SPLUNK_USERNAME: ${{ secrets.SPLUNK_USERNAME }}
           SPLUNK_PASSWORD: ${{ secrets.SPLUNK_PASSWORD }}
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          SPLUNK_HEC_URL: ${{ secrets.SPLUNK_HEC_URL }}
+          SPLUNK_HEC_TOKEN: ${{ secrets.SPLUNK_HEC_TOKEN }}
+          SPLUNK_TEST_INDEX: detection_test
         run: py scripts\deploy_to_splunk.py
