@@ -109,7 +109,6 @@ def evaluate_rule(rule: dict, event: dict) -> bool:
 def validate_test_layout(rule_path: Path) -> tuple[Path, list[Path]]:
     relative_rule_path = rule_path.relative_to(SIGMA_DIR).with_suffix("")
     test_dir = TESTS_DIR / relative_rule_path
-    positive_dir = test_dir / "positive"
 
     if not test_dir.exists():
         fail(f"Missing Sigma test directory: {test_dir.relative_to(ROOT)}")
@@ -117,16 +116,10 @@ def validate_test_layout(rule_path: Path) -> tuple[Path, list[Path]]:
     if not test_dir.is_dir():
         fail(f"Sigma test path is not a directory: {test_dir.relative_to(ROOT)}")
 
-    if not positive_dir.exists():
-        fail(f"Missing Sigma positive fixture directory: {positive_dir.relative_to(ROOT)}")
-
-    if not positive_dir.is_dir():
-        fail(f"Sigma positive fixture path is not a directory: {positive_dir.relative_to(ROOT)}")
-
-    event_files = sorted(positive_dir.glob("*.json"))
+    event_files = sorted(test_dir.glob("*.json"))
 
     if not event_files:
-        fail(f"No Sigma positive fixture events found for {rule_path.name} in {positive_dir.relative_to(ROOT)}")
+        fail(f"No Sigma fixture events found for {rule_path.name} in {test_dir.relative_to(ROOT)}")
 
     return test_dir, event_files
 
