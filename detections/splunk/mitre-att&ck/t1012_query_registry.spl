@@ -8,6 +8,6 @@
 # email_subject: Splunk Alert - T1012 Query Registry
 # email_message: Registry query detection triggered in the lab.
 
-index=sysmon EventCode=1 ParentImage!="*splunkd.exe" Image="*\\reg.exe" CommandLine="*query*" OR CommandLine="*HKLM*" OR CommandLine="*HKCU*"
+index=sysmon EventCode=1 ParentImage!="*splunkd.exe" Image="*\\reg.exe" (CommandLine="*query*" OR CommandLine="*HKLM*" OR CommandLine="*HKCU*")
 | table _time host User ParentImage Image CommandLine
 | sort - _time

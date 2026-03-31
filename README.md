@@ -17,6 +17,20 @@ The focus is not just detection creation, but building a **repeatable detection 
 
 ---
 
+## Why This Matters
+
+Many detection efforts fail due to lack of validation and consistency.
+
+This project focuses on solving that problem by treating detections as code:
+- version-controlled
+- testable
+- continuously validated
+- deployable through CI/CD
+
+The goal is not just to detect threats, but to ensure detections are reliable and maintainable over time.
+
+--- 
+
 ## Project Goals
 
 - Simulate realistic adversary behavior in a controlled lab
