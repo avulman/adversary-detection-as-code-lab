@@ -1,84 +1,138 @@
 # Adversary Detection as Code Lab
 
-Built to develop, validate, and document host-based and network-based detections against realistic attacker behavior.
+This project simulates a small enterprise environment to design, validate, and operationalize detections across both host and network telemetry.
 
-The lab combines:
+The focus is not just detection creation, but building a **repeatable detection engineering workflow** supported by validation, testing, and CI/CD.
 
-- **Active Directory**
-- **Windows endpoint telemetry via Sysmon**
-- **Splunk SIEM**
-- **Security Onion for network detection**
-- **An attacker VM for controlled adversary simulation**
-- **MITRE ATT&CK-mapped validation scenarios**
+---
 
-The goal is not just to "run attacks," but to create a repeatable detection engineering workflow:
+## What This Project Demonstrates
 
-**simulate behavior > collect telemetry > write detection logic > validate results > document coverage**
+- Detection engineering across **endpoint and network telemetry**
+- Validation of detections using **structured test data and PCAP replay**
+- CI/CD pipelines for **detection quality assurance and deployment**
+- Integration of **Splunk (host)** and **Security Onion (network)**
+- Mapping detections to **MITRE ATT&CK techniques**
+- Treating detections as **version-controlled, testable code**
 
 ---
 
 ## Project Goals
 
-This project is designed to demonstrate practical detection engineering skills by:
-
-- Building a realistic multi-host lab environment
-- Generating adversary activity in a controlled way
-- Collecting both host and network telemetry
-- Writing and validating detections in Splunk and Security Onion
-- Mapping detections to MITRE ATT&CK
-- Tracking results through a detection validation matrix
-- Organizing detections and validations like a detection-as-code project
-
----
-
-## Lab Architecture
-
-The lab currently includes the following systems:
-
-| Hostname | IP Address | Role |
-|---|---|---|
-| `CORP-DC-01` | `10.10.10.10` | Domain Controller / DNS |
-| `WIN-ENDPOINT-01` | `10.10.10.20` | Windows endpoint / victim host |
-| `SPLUNK-SERVER` | `10.10.10.30` | SIEM |
-| `SENSOR-NSM` | `10.10.10.40` / `192.168.116.130` | Security Onion network sensor |
-| `ATTACKER` | `10.10.10.50` | Adversary simulation host |
-
-Primary lab traffic flows across:
-
-- **Internal lab network:** `10.10.10.0/24`
-- **Security Onion management network:** `192.168.116.0/24`
+- Simulate realistic adversary behavior in a controlled lab
+- Collect and centralize telemetry from multiple sources
+- Develop detections aligned to MITRE ATT&CK
+- Validate detections using repeatable test cases
+- Track coverage and identify detection gaps
+- Enforce structure and quality through CI/CD pipelines
 
 ---
 
 ## Telemetry Sources
 
-### Host-Based Telemetry
+### Host-Based (Splunk)
 - Windows Event Logs
-- Sysmon Operational logs
-- Splunk Universal Forwarder
-- Indexed into Splunk for host-based detections
+- Sysmon
+- Process creation and access events
+- Registry and command-line activity
 
-### Network-Based Telemetry
-- Zeek
-- Suricata
-- Security Onion SOC
-- Indexed into Security Onion / Elastic for hunt and alert validation
+### Network-Based (Security Onion)
+- Zeek connection logs
+- Suricata alerts
+- Protocol and traffic metadata
 
 ---
 
-## Current Workflow
+## Detection Workflow
 
-The current detection engineering workflow in this lab is:
+This lab follows a consistent detection engineering lifecycle:
 
-1. Generate adversary behavior
-2. Confirm telemetry appears in Splunk or Security Onion
-3. Build detection logic
-4. Validate the logic against the attack
-5. Document the outcome
-6. Map the result to MITRE ATT&CK
+1. Simulate adversary behavior
+2. Verify telemetry is captured
+3. Develop detection logic
+4. Validate detection against known activity
+5. Store test cases and results
+6. Map detection to MITRE ATT&CK
 
-Additional ATT&CK techniques will be added as the lab expands.
+---
 
-## MITRE ATT&CK Definitions:
-https://d3fend.mitre.org/offensive-technique/
+## Detection Validation
 
+Each detection includes structured test coverage:
+
+### Splunk
+- JSON-based event fixtures
+- Injected into a test index via HEC
+- Queries executed and validated
+
+### Suricata
+- PCAP-based validation
+- Traffic replayed against rules
+- Alert generation verified
+
+### Sigma
+- JSON event samples
+- Rule logic evaluated against expected matches
+
+---
+
+## CI/CD Pipeline
+
+GitHub Actions pipelines enforce quality and automate deployment:
+
+### Validation Pipeline
+- Repository structure validation
+- Detection syntax validation
+- Splunk detection testing
+- Suricata PCAP validation
+- Sigma rule validation
+
+### Deployment Pipelines
+- Splunk detections deployed as alerts via API
+- Security Onion detections deployed via UI automation (completed with Playwright as I did not want to pay for an enterprise key)
+
+---
+
+## Security Onion Deployment Approach
+
+Security Onion detections are deployed using **Playwright-based UI automation**.
+
+This approach was intentionally chosen to:
+- Simulate real-world constraints where APIs may be limited
+- Demonstrate automation capability across non-API systems
+- Enable full lifecycle management (create/update/delete)
+
+Note: This method is dependent on UI structure and may require adjustments across versions.
+
+---
+
+## Limitations
+
+- Lab environment does not reflect full enterprise scale
+- Detection logic is simplified and requires tuning for production
+- Security Onion deployment relies on UI automation
+- ATT&CK coverage is partial and expanding
+- Detection scoring and prioritization is not yet implemented
+
+---
+
+## Future Improvements
+
+- Expand ATT&CK coverage across additional tactics
+- Add negative test cases (false positive validation)
+- Introduce detection scoring / severity modeling
+- Improve Sigma → SIEM translation workflows
+- Add automated reporting / dashboards
+
+---
+
+## Summary
+
+This project focuses on building detections the same way mature security teams do:
+
+- structured
+- validated
+- version-controlled
+- continuously improved
+
+The goal is not just visibility, but **confidence in detection quality**.

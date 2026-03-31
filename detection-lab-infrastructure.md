@@ -1,158 +1,137 @@
-# Lab Architecture & Asset Inventory
+# Lab Architecture & Infrastructure
 
-## 1. Overview
-This lab simulates a small enterprise environment designed for detection engineering, adversary simulation, and telemetry analysis.
+This document describes the underlying environment used to support detection engineering, validation, and adversary simulation.
 
-It provides:
-- Host-based visibility via centralized logging (Splunk)
-- Network-based visibility via network monitoring and intrusion detection (SecurityOnion)
-- A controlled environment to validate detections aligned to MITRE ATT&CK
+Unlike the README, which focuses on workflow and outcomes, this document focuses on **how the lab is built and how systems interact**.
 
 ---
 
-## 2. Objectives
-- Simulate realistic attacker behavior in a controlled environment
-- Collect and centralize host and network telemetry
-- Develop and validate detection logic
-- Measure detection coverage and identify gaps
-- Build a repeatable Detection-as-Code workflow
+## Overview
+
+The lab simulates a small enterprise network with both host-based and network-based visibility.
+
+It is designed to:
+- Generate realistic telemetry
+- Support repeatable adversary simulation
+- Enable validation of detections across multiple data sources
 
 ---
 
-## 3. Network Architecture
+## Network Design
 
 ### Internal Lab Network
-- Subnet: `10.10.10.0/24`
-- Purpose: Core enterprise environment for all lab systems
+- Subnet: 10.10.10.0/24
+- Purpose: Core communication between all lab systems
 
 ### Management Network
-- Subnet: `192.168.116.0/24`
-- Purpose: Management access for monitoring platform and updates
+- Subnet: 192.168.116.0/24
+- Purpose: Administrative access to monitoring platforms
 
 ---
 
-## 4. Systems Overview
+## Systems
 
 | System | Hostname | Role | IP Address |
 |--------|----------|------|-----------|
-| Domain Controller | `CORP-DC-01` | Active Directory / DNS | 10.10.10.10 |
-| Windows Endpoint | `WIN-ENDPOINT-01` | User workstation | 10.10.10.20 |
-| SIEM Platform | `SPLUNK-SERVER` | Log ingestion and detection | 10.10.10.30 |
-| Network Sensor | `SENSOR-NSM` | Network monitoring and detection | 10.10.10.40 / 192.168.116.130 |
-| Attacker VM | `ATTACKER` | Adversary simulation | 10.10.10.50 |
+| Domain Controller | CORP-DC-01 | Active Directory / DNS | 10.10.10.10 |
+| Endpoint | WIN-ENDPOINT-01 | User workstation | 10.10.10.20 |
+| SIEM | SPLUNK-SERVER | Log ingestion and detection | 10.10.10.30 |
+| Network Sensor | SENSOR-NSM | Network monitoring | 10.10.10.40 / 192.168.116.130 |
+| Attacker | ATTACKER | Adversary simulation | 10.10.10.50 |
 
 ---
 
-## 5. Asset Inventory
+## System Roles & Detection Relevance
 
 ### CORP-DC-01 (Domain Controller)
-- Operating System: Windows Server
-- Role: Active Directory and DNS services
-- Domain: `corp.local`
-
-**Responsibilities**
-- Authentication and directory services
-- DNS resolution
-- Account and policy management
+- Provides authentication and directory services
+- Handles DNS resolution within the lab
 
 **Detection Relevance**
-- Authentication activity
-- Directory access patterns
-- Lateral movement behaviors
+- Authentication patterns
+- Account usage and anomalies
+- Lateral movement indicators
 
 ---
 
 ### WIN-ENDPOINT-01 (Endpoint)
-- Operating System: Windows
-- Role: Primary user workstation and attack target
-
-**Responsibilities**
-- Generates endpoint telemetry
-- Executes simulated adversary behaviors
-- Forwards logs to centralized logging platform
-
-**Detection Relevance**
-- Process execution activity
-- File and registry changes
-- Script and command-line execution
+- Primary target for adversary activity
+- Generates host-based telemetry
 
 ---
 
 ### SPLUNK-SERVER (SIEM)
-- Operating System: Linux
-- Role: Centralized logging and detection platform
-
-**Responsibilities**
-- Ingests host-based telemetry
-- Stores and indexes logs
-- Supports detection development and analysis
-
-**Detection Relevance**
-- Event correlation
-- Behavioral analysis
-- Detection logic execution
+- Centralizes host telemetry
+- Executes detection logic
 
 ---
 
-### SENSOR-NSM (Network Monitoring)
-- Operating System: Security-focused Linux distribution
-- Role: Network detection and monitoring
-
-**Interfaces**
-- Lab Network: `10.10.10.40`
-- Management Network: `192.168.116.130`
-
-**Responsibilities**
-- Monitors network traffic
-- Generates network metadata and alerts
-- Provides visibility into network activity
+### SENSOR-NSM (Security Onion)
+- Captures and analyzes network traffic
+- Runs Zeek and Suricata
 
 **Detection Relevance**
-- Network scanning and reconnaissance
-- Protocol and service activity
-- East-west traffic analysis
+- Network scanning activity
+- Protocol usage patterns
+- East-west traffic visibility
+- Alert generation from Suricata rules
 
 ---
 
 ### ATTACKER (Adversary Simulation)
-- Operating System: Linux
-- Role: Simulated attacker system
-
-**Responsibilities**
-- Generates controlled attack traffic
-- Performs reconnaissance and enumeration
-- Executes attack scenarios for validation
+- Generates controlled attack activity
+- Used for repeatable validation scenarios
 
 **Detection Relevance**
-- Source of simulated adversary activity
-- Enables repeatable detection testing
-- Supports validation of network and host detections
+- Source of known-bad activity
+- Enables consistent detection testing
+- Supports validation across host and network layers
 
 ---
 
-## 6. Detection Coverage
+## Telemetry Flow
+
+### Host-Based Flow
+Endpoint > Sysmon > Splunk Forwarder > Splunk Index
+
+### Network-Based Flow
+Network Traffic → Security Onion → Zeek / Suricata → Alerts & Logs
+
+
+---
+
+## Detection Coverage Layers
 
 | Layer | Coverage |
 |------|--------|
-| Host | Endpoint and system-level telemetry |
-| Network | Traffic analysis and network-based detection |
+| Host | Process, registry, command-line activity |
+| Network | Connections, protocols, traffic patterns |
 
 ---
 
-## 7. Access Points
+## Access Points
 
-- SIEM Web Interface: `http://10.10.10.30:8000`
-- SIEM API: `https://10.10.10.30:8089`
-- Network Monitoring Interface: `https://192.168.116.130`
+- Splunk Web: http://10.10.10.30:8000
+- Splunk API: https://10.10.10.30:8089
+- Security Onion UI: https://192.168.116.130
 
 ---
 
-## 8. Summary
+## Design Considerations
 
-This lab provides full visibility across both host and network layers, enabling:
-- Detection engineering and validation
-- Adversary simulation
-- Telemetry analysis
-- Continuous improvement of detection coverage
+- Systems are intentionally minimal to keep detection logic focused
+- Both host and network telemetry are required to validate coverage
+- Adversary simulation is controlled and repeatable
+- Environment is modular and can be expanded with additional hosts or sensors
 
-The environment is designed to be modular and scalable, allowing additional systems, telemetry sources, and detection capabilities to be integrated over time.
+---
+
+## Summary
+
+This lab provides:
+
+- Controlled adversary simulation
+- Full visibility across host and network telemetry
+- A foundation for building and validating detections
+
+It is designed to support **practical detection engineering**, not just theoretical analysis.
