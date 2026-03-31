@@ -64,11 +64,46 @@ def evaluate_rule(rule: dict, event: dict) -> bool:
 
         selection_results[name] = match_selection(event, selection)
 
-    if " and " in condition:
-        parts = [part.strip() for part in condition.split(" and ")]
-        return all(selection_results.get(part, False) for part in parts)
+    tokens = condition.split()
+    pos = 0
 
-    return selection_results.get(condition, False)
+    def parse_or():
+        nonlocal pos
+        left = parse_and()
+
+        while pos < len(tokens) and tokens[pos].lower() == "or":
+            pos += 1
+            right = parse_and()
+            left = left or right
+
+        return left
+
+    def parse_and():
+        nonlocal pos
+        left = parse_not()
+
+        while pos < len(tokens) and tokens[pos].lower() == "and":
+            pos += 1
+            right = parse_not()
+            left = left and right
+
+        return left
+
+    def parse_not():
+        nonlocal pos
+        if pos < len(tokens) and tokens[pos].lower() == "not":
+            pos += 1
+            return not parse_not()
+
+        if pos >= len(tokens):
+            return False
+
+        name = tokens[pos]
+        pos += 1
+        return selection_results.get(name, False)
+
+    result = parse_or()
+    return result if pos == len(tokens) else False
 
 
 def validate_test_layout(rule_path: Path) -> tuple[Path, list[Path]]:
@@ -79,13 +114,19 @@ def validate_test_layout(rule_path: Path) -> tuple[Path, list[Path]]:
     if not test_dir.exists():
         fail(f"Missing Sigma test directory: {test_dir.relative_to(ROOT)}")
 
-    if positive_dir.exists():
-        event_files = sorted(positive_dir.glob("*.json"))
-    else:
-        event_files = sorted(test_dir.glob("*.json"))
+    if not test_dir.is_dir():
+        fail(f"Sigma test path is not a directory: {test_dir.relative_to(ROOT)}")
+
+    if not positive_dir.exists():
+        fail(f"Missing Sigma positive fixture directory: {positive_dir.relative_to(ROOT)}")
+
+    if not positive_dir.is_dir():
+        fail(f"Sigma positive fixture path is not a directory: {positive_dir.relative_to(ROOT)}")
+
+    event_files = sorted(positive_dir.glob("*.json"))
 
     if not event_files:
-        fail(f"No Sigma positive fixture events found for {rule_path.name} in {test_dir.relative_to(ROOT)}")
+        fail(f"No Sigma positive fixture events found for {rule_path.name} in {positive_dir.relative_to(ROOT)}")
 
     return test_dir, event_files
 
