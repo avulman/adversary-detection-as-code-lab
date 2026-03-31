@@ -70,12 +70,6 @@ def load_test_config(rule_stem: str) -> dict:
 
 
 def normalize_fixture_event(raw_event: dict) -> dict:
-    """
-    Support either:
-      { ...fields... }
-    or:
-      { "preview": true, "result": { ...fields... } }
-    """
     if not isinstance(raw_event, dict):
         fail("Fixture event must be a JSON object")
 
@@ -105,29 +99,15 @@ def read_positive_fixture_events(rule_stem: str) -> list[dict]:
 
 
 def extract_base_search(query: str) -> str:
-    """
-    Keep only the predicate portion before the first pipe.
-    Example:
-      index=sysmon EventCode=1 Image="*powershell.exe"
-      | table ...
-    becomes:
-      index=sysmon EventCode=1 Image="*powershell.exe"
-    """
     return query.split("|", 1)[0].strip()
 
 
 def remove_index_terms(expr: str) -> str:
-    """
-    Remove index=... tokens because local fixtures are not stored in Splunk indexes.
-    """
     expr = re.sub(r"\bindex\s*=\s*\S+", "", expr, flags=re.IGNORECASE)
     return " ".join(expr.split())
 
 
 def normalize_expression(expr: str) -> str:
-    """
-    Normalize spacing and fix a few common repo-side quirks.
-    """
     expr = expr.replace("\n", " ").replace("\r", " ")
     expr = expr.replace("!=", " != ")
     expr = re.sub(r"(?<![!<>=])=(?!=)", " = ", expr)
@@ -200,10 +180,6 @@ def is_operator_token(token: str) -> bool:
 
 
 def starts_comparison(tokens: list[str], index: int) -> bool:
-    """
-    A comparison starts at position i if tokens[i:i+3] look like:
-      field operator value
-    """
     if index + 2 >= len(tokens):
         return False
 
@@ -224,18 +200,6 @@ def starts_comparison(tokens: list[str], index: int) -> bool:
 
 
 def insert_implicit_ands(tokens: list[str]) -> list[str]:
-    """
-    Splunk base searches often imply AND by adjacency:
-      EventCode=1 Image="*powershell.exe"
-    becomes:
-      EventCode=1 AND Image="*powershell.exe"
-
-    We only insert AND:
-    - after a complete comparison when another comparison starts next
-    - after a closing ')' when another comparison starts next
-    - after a complete comparison when '(' starts next
-    - after a closing ')' when '(' starts next
-    """
     result = []
     i = 0
 
@@ -423,10 +387,26 @@ def main():
 
     for rule_path in files:
         test_dir = TESTS_DIR / rule_path.stem
-        if test_dir.exists():
-            run_rule_test(rule_path)
-        else:
-            log(f"Skipping {rule_path.name} because no test directory exists")
+        if not test_dir.exists():
+            fail(
+                f"Missing test directory for {rule_path.name}: "
+                f"{test_dir.relative_to(ROOT)}"
+            )
+
+        if not test_dir.is_dir():
+            fail(
+                f"Test path for {rule_path.name} is not a directory: "
+                f"{test_dir.relative_to(ROOT)}"
+            )
+
+        config_path = test_dir / "test_config.json"
+        if not config_path.exists():
+            fail(
+                f"Missing test_config.json for {rule_path.name}: "
+                f"{config_path.relative_to(ROOT)}"
+            )
+
+        run_rule_test(rule_path)
 
     print("[PASS] Local Splunk detection true-positive tests succeeded")
 
