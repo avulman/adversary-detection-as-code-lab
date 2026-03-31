@@ -95,7 +95,7 @@ It is designed to:
 Endpoint > Sysmon > Splunk Forwarder > Splunk Index
 
 ### Network-Based Flow
-Network Traffic → Security Onion → Zeek / Suricata → Alerts & Logs
+Network Traffic > Security Onion > Zeek / Suricata > Alerts & Logs
 
 
 ---
