@@ -89,7 +89,7 @@ GitHub Actions pipelines enforce quality and automate deployment:
 
 ### Deployment Pipelines
 - Splunk detections deployed as alerts via API
-- Security Onion detections deployed via UI automation (completed with Playwright as I did not want to pay for an enterprise key)
+- Security Onion detections deployed via UI automation (implemented with Playwright due to limited API support in the free version)
 
 ---
 
@@ -121,7 +121,7 @@ Note: This method is dependent on UI structure and may require adjustments acros
 - Expand ATT&CK coverage across additional tactics
 - Add negative test cases (false positive validation)
 - Introduce detection scoring / severity modeling
-- Improve Sigma → SIEM translation workflows
+- Improve Sigma > SIEM translation workflows
 - Add automated reporting / dashboards
 
 ---
