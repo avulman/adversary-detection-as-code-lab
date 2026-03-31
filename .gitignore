@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.env/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Playwright
+playwright-report/
+test-results/
+
+# Secrets / configs
+.env
+*.env
+
+# Misc
+*.tmp
+*.bak
