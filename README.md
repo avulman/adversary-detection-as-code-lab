@@ -15,6 +15,8 @@ The focus is not just detection creation, but building a **repeatable detection 
 - Integration of **Splunk (host)** and **Security Onion (network)**
 - Mapping detections to **MITRE ATT&CK techniques**
 - Treating detections as **version-controlled, testable code**
+- 
+<img width="1622" height="1201" alt="(3) GitHub Actions" src="https://github.com/user-attachments/assets/fe9d87e3-6e0c-45b1-889c-5ebd0d1b6bca" />
 
 ---
 
