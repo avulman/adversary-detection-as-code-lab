@@ -7,32 +7,40 @@ import sys
 import requests
 import yaml
 
+# root relative to current file
 ROOT = Path(__file__).resolve().parent.parent
 
+# Sigma, Suricata, Splunk detection directories
 SIGMA_DIR = ROOT / "detections" / "security-onion" / "sigma"
 SURICATA_DIR = ROOT / "detections" / "security-onion" / "suricata"
 SPLUNK_DIR = ROOT / "detections" / "splunk" / "mitre-att&ck"
 
+# Splunk API creds for syntax validation
 SPLUNK_BASE_URL = os.getenv("SPLUNK_BASE_URL", "").rstrip("/")
 SPLUNK_USERNAME = os.getenv("SPLUNK_USERNAME", "")
 SPLUNK_PASSWORD = os.getenv("SPLUNK_PASSWORD", "")
 
+# disable SSL warnings for lab
 requests.packages.urllib3.disable_warnings()
 
 
+# failure helper
 def fail(msg: str):
     print(f"[FAIL] {msg}")
     sys.exit(1)
 
 
+# log helper
 def log(msg: str):
     print(f"[INFO] {msg}")
 
 
+# warn helper - non-fatal
 def warn(msg: str):
     print(f"[WARN] {msg}")
 
 
+# ensure a required directory exists and is valid
 def ensure_exists(path: Path, description: str):
     if not path.exists():
         fail(f"Missing {description}: {path.relative_to(ROOT)}")
@@ -40,6 +48,7 @@ def ensure_exists(path: Path, description: str):
         fail(f"Expected directory for {description}: {path.relative_to(ROOT)}")
 
 
+# validate Sigma rules for structure and required fields
 def validate_sigma_rules():
     ensure_exists(SIGMA_DIR, "Sigma detections directory")
 
@@ -52,6 +61,7 @@ def validate_sigma_rules():
 
     for path in files:
         raw = path.read_text(encoding="utf-8", errors="ignore").strip()
+        # ensure file is not empty
         if not raw:
             fail(f"Sigma rule is empty: {path.relative_to(ROOT)}")
 
@@ -60,9 +70,11 @@ def validate_sigma_rules():
         except Exception as e:
             fail(f"Invalid YAML in Sigma rule {path.relative_to(ROOT)}: {e}")
 
+        # ensure yaml parsed into a dictionary
         if not isinstance(data, dict):
             fail(f"Sigma rule must be a YAML object: {path.relative_to(ROOT)}")
 
+        # validate required top-level keys
         missing = sorted(required_top_level - set(data.keys()))
         if missing:
             fail(
@@ -70,23 +82,30 @@ def validate_sigma_rules():
                 + ", ".join(missing)
             )
 
+        # validate title field
         if not isinstance(data.get("title"), str) or not data["title"].strip():
             fail(f"Sigma rule title must be a non-empty string: {path.relative_to(ROOT)}")
 
+        # validate logsource structure
         if not isinstance(data.get("logsource"), dict) or not data["logsource"]:
             fail(f"Sigma rule logsource must be a non-empty object: {path.relative_to(ROOT)}")
 
+        # validate detection section
         if not isinstance(data.get("detection"), dict) or not data["detection"]:
             fail(f"Sigma rule detection must be a non-empty object: {path.relative_to(ROOT)}")
 
+        # ensure detection condition exists
         if "condition" not in data["detection"]:
             fail(f"Sigma rule detection must include condition: {path.relative_to(ROOT)}")
 
         log(f"Sigma syntax OK: {path.relative_to(ROOT)}")
 
 
+# parse Suricata rule options into key-value pairs
+# e.g.: msg:"test"; sid:1001; > {"msg": "test", "sid": "1001"}
 def parse_suricata_options(options_text: str) -> dict[str, str]:
     parsed = {}
+    # split by semicolon and strip whitespace
     parts = [part.strip() for part in options_text.split(";") if part.strip()]
 
     for part in parts:
@@ -99,6 +118,7 @@ def parse_suricata_options(options_text: str) -> dict[str, str]:
     return parsed
 
 
+# validate Suricata rules for syntax and required fields
 def validate_suricata_rules():
     ensure_exists(SURICATA_DIR, "Suricata detections directory")
 
@@ -107,6 +127,7 @@ def validate_suricata_rules():
         warn("No Suricata rules found")
         return
 
+    # regex pattern for full Suricata rule structure
     rule_pattern = re.compile(
         r"^(alert|drop|reject|pass)\s+"      # action
         r"(\S+)\s+"                          # proto
@@ -121,9 +142,11 @@ def validate_suricata_rules():
 
     for path in files:
         raw = path.read_text(encoding="utf-8", errors="ignore").strip()
+        # ensure rule is not empty
         if not raw:
             fail(f"Suricata rule is empty: {path.relative_to(ROOT)}")
-
+        
+        # basic sanity check for balanced parentheses
         if raw.count("(") != raw.count(")"):
             fail(f"Unbalanced parentheses in Suricata rule: {path.relative_to(ROOT)}")
 
@@ -132,11 +155,13 @@ def validate_suricata_rules():
             fail(f"Invalid Suricata rule structure: {path.relative_to(ROOT)}")
 
         options_text = match.group(8).strip()
+        # ensure options block exists
         if not options_text:
             fail(f"Suricata rule missing options block: {path.relative_to(ROOT)}")
-
+        # parse options into dictionary
         options = parse_suricata_options(options_text)
 
+        # validate required fields
         for required_key in ("msg", "sid", "rev"):
             if required_key not in options or not options[required_key]:
                 fail(
@@ -144,6 +169,7 @@ def validate_suricata_rules():
                     f"{path.relative_to(ROOT)}"
                 )
 
+        # ensure SID and rev are numeric
         if not re.fullmatch(r"\d+", options["sid"]):
             fail(f"Suricata sid must be numeric: {path.relative_to(ROOT)}")
 
@@ -153,6 +179,7 @@ def validate_suricata_rules():
         log(f"Suricata syntax OK: {path.relative_to(ROOT)}")
 
 
+# parse Splunk detection file into metadata + query
 def parse_splunk_detection(path: Path) -> tuple[dict, str]:
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
     metadata = {}
@@ -188,6 +215,7 @@ def parse_splunk_detection(path: Path) -> tuple[dict, str]:
     return metadata, query
 
 
+# validate Splunk query syntax using Splunk REST API parser
 def splunk_parse_search(query: str, path: Path):
     if not SPLUNK_BASE_URL or not SPLUNK_USERNAME or not SPLUNK_PASSWORD:
         fail(
@@ -199,8 +227,10 @@ def splunk_parse_search(query: str, path: Path):
     if not normalized_query.lower().startswith(("search ", "|", "from ")):
         normalized_query = f"search {normalized_query}"
 
+    # ensure query starts with valid SPL command
     url = f"{SPLUNK_BASE_URL}/services/search/parser"
 
+    # send query to Splunk parser endpoint
     response = requests.post(
         url,
         auth=(SPLUNK_USERNAME, SPLUNK_PASSWORD),
@@ -212,6 +242,7 @@ def splunk_parse_search(query: str, path: Path):
         timeout=30,
     )
 
+    # fail if HTTP request fails
     if response.status_code != 200:
         fail(
             f"Splunk parser rejected {path.relative_to(ROOT)} "
@@ -226,6 +257,7 @@ def splunk_parse_search(query: str, path: Path):
             f"{response.text[:500]}"
         )
 
+    # check for parser error messages
     if isinstance(payload, dict) and payload.get("messages"):
         error_messages = []
         for message in payload["messages"]:
@@ -239,6 +271,7 @@ def splunk_parse_search(query: str, path: Path):
             )
 
 
+# validate Splunk rules using metadata + parser validation
 def validate_splunk_rules():
     ensure_exists(SPLUNK_DIR, "Splunk detections directory")
 
@@ -250,9 +283,11 @@ def validate_splunk_rules():
     for path in files:
         metadata, query = parse_splunk_detection(path)
 
+        # validate MITRE format
         if not metadata["mitre"].upper().startswith("T"):
             fail(f"Invalid MITRE value in {path.relative_to(ROOT)}: {metadata['mitre']}")
 
+        # validate SPL syntax via Splunk API
         splunk_parse_search(query, path)
         log(f"Splunk syntax OK: {path.relative_to(ROOT)}")
 

@@ -1,32 +1,36 @@
-# Python
+# python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Virtual environments
+# virtual environments
 venv/
 .env/
+.venv/
 
-# Logs
+# logs
 *.log
 
-# OS
+# os files
 .DS_Store
 Thumbs.db
 
-# IDEs
+# ide / editor
 .vscode/
 .idea/
 
-# Playwright
+# playwright
 playwright-report/
 test-results/
 
-# Secrets / configs
+# secrets / configs
 .env
 *.env
 
-# Misc
+# temp / backup
 *.tmp
 *.bak
+
+# local lab packet captures
+*.pcap

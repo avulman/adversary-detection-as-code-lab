@@ -42,6 +42,47 @@ The goal is not just to detect threats, but to ensure detections are reliable an
 
 ---
 
+## Quick Start
+
+### Prerequisites
+
+This project is designed for a **self-hosted Windows GitHub Actions runner** and a working lab environment.
+
+Required components:
+
+- Python 3.11
+- Git
+- Playwright
+- Chromium browser for Playwright
+- Suricata installed and accessible in `PATH`
+- Splunk Enterprise with REST API access
+- Splunk HTTP Event Collector (HEC) configured for test ingestion
+- Security Onion UI accessible from the runner
+
+## Workflow setup
+
+This repository includes three GitHub Actions workflows:
+
+1. `validate`  
+   runs repository validation, syntax validation, and detection tests
+
+2. `validate-and-deploy` for Splunk  
+   validates and deploys Splunk detections as alerts
+
+3. `validate-and-deploy-securityonion`  
+   validates and deploys Security Onion detections through UI automation
+
+### Important
+
+These workflows are designed for a **self-hosted Windows runner** and will not function correctly on a default GitHub-hosted runner without major changes.
+
+### Install dependencies
+
+py -m pip install -r requirements.txt
+py -m playwright install chromium
+
+---
+
 ## Telemetry Sources
 
 ### Host-Based (Splunk)

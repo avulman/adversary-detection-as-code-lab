@@ -17,7 +17,6 @@ This matrix tracks implemented detections across the lab environment, mapped to 
 | T1071.001 | Command and Control | Suspicious HTTP User-Agent Python Requests | Suricata | Sensor-NSM / Security Onion | Real-time signature | 4 | Scripted HTTP traffic / custom tooling | Useful for detecting obvious scripted traffic. May require allowlisting for legitimate Python automation. |
 | T1071.001 | Command and Control | Python Requests User-Agent in Zeek HTTP | Zeek HTTP | Sigma | On ingest / Sigma alerting | 3 | Scripted HTTP activity using python-requests | Good behavioral network detection for scripted web traffic. May also catch benign internal automation and developer tooling. |
 | T1105 | Command and Control / Ingress Tool Transfer | Executable Download (.exe) | Suricata | Sensor-NSM / Security Onion | Real-time signature | 3 | Tool transfer / payload staging | Useful but broad. Requires allowlisting for legitimate software repositories and admin activity. |
-| T1021.002 | Lateral Movement | SMB Connection in Zeek Conn | Zeek Conn | Sigma | On ingest / Sigma alerting | 2 | Network connection to SMB service on TCP 445 | Useful baseline visibility into remote service access and file-sharing activity, but potentially noisy in Windows environments without tuning. |
 
 ### Primary Telemetry Sources
 - Sysmon -> Splunk

@@ -10,12 +10,20 @@ STATE_FILE = ROOT / "state" / "securityonion_rule_state.json"
 
 AUTO_SID_START = 1_000_000
 
+"""
+This is a very simple helper class for identifying the next available SID for Suricata rules.
+As the rules file grows, finding next available SID can be tedious.
 
+"""
+
+# extract numeric SID value from Suricata rule using regex
+# e.g.: sid:1000001;
 def extract_sid(content: str) -> int | None:
     match = re.search(r"\bsid\s*:\s*(\d+)\b", content, re.IGNORECASE)
     return int(match.group(1)) if match else None
 
 
+# collect all SIDs currently defined in the repo rules
 def collect_repo_sids() -> set[int]:
     sids = set()
 
@@ -31,6 +39,7 @@ def collect_repo_sids() -> set[int]:
     return sids
 
 
+# collect all SIDs currently defined in the state file
 def collect_state_sids() -> set[int]:
     sids = set()
 
@@ -51,6 +60,7 @@ def collect_state_sids() -> set[int]:
     return sids
 
 
+# take repo SIDs, state SIDs, then get the highest number, +1, then return
 def main():
     repo_sids = collect_repo_sids()
     state_sids = collect_state_sids()

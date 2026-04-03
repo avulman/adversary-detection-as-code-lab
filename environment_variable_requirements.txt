@@ -1,0 +1,15 @@
+Environment variables stored in GitHub vault.
+
+The following values are required for full validation and deployment:
+
+Variable	Purpose
+SPLUNK_BASE_URL	Splunk management API base URL
+SPLUNK_USERNAME	Splunk username
+SPLUNK_PASSWORD	Splunk password
+SPLUNK_HEC_URL	Splunk HTTP Event Collector URL
+SPLUNK_HEC_TOKEN	Splunk HEC token
+SPLUNK_TEST_INDEX	Splunk index used for detection testing
+ALERT_EMAIL_TO	Recipient for Splunk alert emails
+SO_UI_URL	Security Onion UI URL
+SO_UI_USERNAME	Security Onion UI username
+SO_UI_PASSWORD	Security Onion UI password
