@@ -79,6 +79,7 @@ These workflows are designed for a **self-hosted Windows runner** and will not f
 ### Install dependencies
 
 py -m pip install -r requirements.txt
+
 py -m playwright install chromium
 
 ---
