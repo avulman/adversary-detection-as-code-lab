@@ -3,6 +3,7 @@
 This project simulates a small enterprise environment to design, validate, and operationalize detections across both host and network telemetry.
 
 The focus is not just detection creation, but building a **repeatable detection engineering workflow** supported by validation, testing, and CI/CD.
+<img width="969" height="1282" alt="(1) Diagram" src="https://github.com/user-attachments/assets/a34a2e9a-bd64-4e0d-9b7f-f6e8fa0b7a8b" />
 
 ---
 
@@ -71,6 +72,8 @@ This repository includes three GitHub Actions workflows:
 
 3. `validate-and-deploy-securityonion`  
    validates and deploys Security Onion detections through UI automation
+   
+<img width="844" height="308" alt="(4) Actions Runner" src="https://github.com/user-attachments/assets/e58ba682-3e0c-4711-9829-8eba5d6a3724" />
 
 ### Important
 
